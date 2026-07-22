@@ -89,12 +89,7 @@ struct AddRuleProviderSheet: View {
                     ("text", "text"),
                     ("mrs", "mrs")
                 ])
-                picker("命中后走", selection: $form.target, options: [
-                    ("PROXY", "PROXY"),
-                    ("AUTO", "AUTO"),
-                    ("DIRECT", "DIRECT"),
-                    ("REJECT", "REJECT")
-                ])
+                ruleTargetPicker
             }
 
             Toggle(isOn: $form.viaProxy) {
@@ -155,5 +150,59 @@ struct AddRuleProviderSheet: View {
             .pickerStyle(.menu)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var ruleTargetPicker: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("命中后走")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(T.muted)
+            Menu {
+                Section("内置策略") {
+                    ForEach(FINAL_TARGETS, id: \.self) { target in
+                        ruleTargetButton(target, kind: "builtin")
+                    }
+                }
+                if !store.ruleTargetGroups.isEmpty {
+                    Section("分组") {
+                        ForEach(store.ruleTargetGroups, id: \.self) { target in
+                            ruleTargetButton(target, kind: "group")
+                        }
+                    }
+                }
+                if !store.ruleTargetNodes.isEmpty {
+                    Section("节点") {
+                        ForEach(store.ruleTargetNodes, id: \.self) { target in
+                            ruleTargetButton(target, kind: "node")
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Text(form.target)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 8))
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help(store.connected ? "选择规则命中后的出站目标" : "启动并连接内核后可选择节点和分组")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func ruleTargetButton(_ target: String, kind: String) -> some View {
+        Button {
+            form.target = target
+            form.targetKind = kind
+        } label: {
+            HStack {
+                Text(target)
+                if form.target == target && form.targetKind == kind {
+                    Image(systemName: "checkmark")
+                }
+            }
+        }
     }
 }

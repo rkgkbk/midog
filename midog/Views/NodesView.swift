@@ -6,7 +6,9 @@ struct NodesView: View {
     @State private var selectedGroup: String?
 
     private var groupNames: [String] {
-        let names = store.proxies.filter { $0.value.isGroup }.keys.sorted()
+        let names = store.proxies.filter {
+            $0.value.isGroup && $0.value.hidden != true && !$0.key.hasPrefix("__MIDOG_RULE_NODE_")
+        }.keys.sorted()
         // PROXY / GLOBAL / AUTO 排前面
         let pinned = ["PROXY", "AUTO", "GLOBAL"].filter { names.contains($0) }
         return pinned + names.filter { !pinned.contains($0) }

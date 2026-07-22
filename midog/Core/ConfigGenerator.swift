@@ -11,6 +11,11 @@ enum ConfigGenerator {
         fileName.replacingOccurrences(of: "\\.(yaml|yml)$", with: "", options: [.regularExpression, .caseInsensitive])
     }
 
+    /// provider 中的节点不能直接作为规则目标；为每个选定节点生成一个隐藏的单节点组。
+    static func ruleNodeGroupName(for ruleProviderName: String) -> String {
+        "__MIDOG_RULE_NODE_\(ruleProviderName)"
+    }
+
     struct Output {
         var yaml: String
         var providers: [String]
@@ -73,6 +78,8 @@ enum ConfigGenerator {
         }
         lines.append("")
 
+        let ruleProviders = data.ruleProviders.filter { $0.enabled && !$0.name.isEmpty && !$0.url.isEmpty }
+
         // ---- proxy-groups ----
         lines.append("proxy-groups:")
         let proxyGroup: JSONValue = .object([
@@ -91,10 +98,23 @@ enum ConfigGenerator {
         ])
         lines.append("  - \(proxyGroup.jsonString)")
         lines.append("  - \(autoGroup.jsonString)")
+        for rp in ruleProviders where rp.targetKind == "node" {
+            guard let node = normalizedRuleTarget(rp.target) else { continue }
+            let exactNodePattern = "^(?:\(NSRegularExpression.escapedPattern(for: node)))$"
+            let nodeGroup: JSONValue = .object([
+                "name": .string(ruleNodeGroupName(for: rp.name)),
+                "type": .string("select"),
+                "include-all-providers": .bool(true),
+                "filter": .string(exactNodePattern),
+                "default-selected": .string(node),
+                "empty-fallback": .string("REJECT"),
+                "hidden": .bool(true)
+            ])
+            lines.append("  - \(nodeGroup.jsonString)")
+        }
         lines.append("")
 
         // ---- rule-providers（远程规则集）----
-        let ruleProviders = data.ruleProviders.filter { $0.enabled && !$0.name.isEmpty && !$0.url.isEmpty }
         if !ruleProviders.isEmpty {
             lines.append("rule-providers:")
             for rp in ruleProviders {
@@ -136,7 +156,12 @@ enum ConfigGenerator {
                 $0.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
             }
             if !referenced {
-                let target = FINAL_TARGETS.contains(rp.target) ? rp.target : "PROXY"
+                let target: String
+                if rp.targetKind == "node", normalizedRuleTarget(rp.target) != nil {
+                    target = ruleNodeGroupName(for: rp.name)
+                } else {
+                    target = normalizedRuleTarget(rp.target) ?? "PROXY"
+                }
                 userRules.append("RULE-SET,\(rp.name),\(target)")
             }
         }

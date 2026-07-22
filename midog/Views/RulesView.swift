@@ -1,5 +1,7 @@
 import Foundation
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct RulesView: View {
     @EnvironmentObject var store: Store
@@ -27,7 +29,7 @@ struct RulesView: View {
         .sheet(isPresented: $showAddProvider) {
             AddRuleProviderSheet()
         }
-        .confirmationDialog("确定删除远程规则集 \(deletingProvider?.name ?? "")？",
+        .confirmationDialog("确定删除规则集 \(deletingProvider?.name ?? "")？",
                             isPresented: Binding(get: { deletingProvider != nil },
                                                  set: { if !$0 { deletingProvider = nil } })) {
             Button("删除", role: .destructive) {
@@ -103,23 +105,24 @@ struct RulesView: View {
         .card()
     }
 
-    // ---- 远程规则集 ----
+    // ---- 规则集 ----
 
     private var providersCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                SectionTitle("远程规则集 (rule-providers)")
+                SectionTitle("规则集 (rule-providers)")
                 Spacer()
+                MiniButton(title: "导入本地规则集") { importLocalRuleProviders() }
                 AccentButton(title: "添加规则集") { showAddProvider = true }
             }
 
-            Text("引用 GitHub/CDN 上维护的规则文件，默认在你的规则之后、兜底之前生效；在上方手写 RULE-SET,名称,目标 可自定义优先级。base64/gfwlist 等格式会自动转换后供内核使用。")
+            Text("支持添加远程规则集或导入本地 YAML、文本、base64/gfwlist、MRS 文件。点击规则后的目标可选择内置策略、分组或节点；在上方手写 RULE-SET,名称,目标 可自定义优先级。")
                 .font(.system(size: 11))
                 .foregroundStyle(T.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
             if store.data.ruleProviders.isEmpty {
-                Text("暂无远程规则集")
+                Text("暂无规则集")
                     .font(.system(size: 12))
                     .foregroundStyle(T.muted)
                     .padding(.vertical, 14)
@@ -137,7 +140,10 @@ struct RulesView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
-        .task { await store.refreshRuleRuntime() }
+        .task {
+            await store.refreshRuleRuntime()
+            await store.refreshProxies()
+        }
     }
 
     private func providerRow(_ provider: RuleProvider) -> some View {
@@ -156,8 +162,11 @@ struct RulesView: View {
                     Text(provider.name)
                         .font(.system(size: 12.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(provider.enabled ? T.fg : T.muted)
-                    Badge(text: "\(provider.behavior) → \(provider.target)", color: T.accent)
-                    if provider.converted {
+                    Badge(text: provider.behavior, color: T.accent)
+                    ruleTargetMenu(provider)
+                    if provider.isLocal {
+                        Badge(text: "本地", color: T.muted)
+                    } else if provider.converted {
                         Badge(text: "\(provider.sourceFormat ?? "") → 已转换", color: T.warn)
                     }
                     if let rt = store.ruleRuntime[provider.name], let count = rt.ruleCount {
@@ -170,7 +179,7 @@ struct RulesView: View {
                             .foregroundStyle(T.muted)
                     }
                 }
-                Text(provider.url)
+                Text(provider.sourceDisplayText)
                     .font(.system(size: 10.5))
                     .foregroundStyle(T.muted.opacity(0.8))
                     .lineLimit(1)
@@ -179,13 +188,89 @@ struct RulesView: View {
 
             Spacer()
 
-            MiniButton(title: "刷新") {
-                Task { await store.refreshRuleProvider(provider) }
+            if !provider.isLocal {
+                MiniButton(title: "刷新") {
+                    Task { await store.refreshRuleProvider(provider) }
+                }
             }
             MiniButton(title: "删除", role: .destructive) {
                 deletingProvider = provider
             }
         }
         .padding(.vertical, 9)
+    }
+
+    private func ruleTargetMenu(_ provider: RuleProvider) -> some View {
+        Menu {
+            Section("内置策略") {
+                ForEach(FINAL_TARGETS, id: \.self) { target in
+                    targetButton(target, kind: "builtin", provider: provider)
+                }
+            }
+            if !store.ruleTargetGroups.isEmpty {
+                Section("分组") {
+                    ForEach(store.ruleTargetGroups, id: \.self) { target in
+                        targetButton(target, kind: "group", provider: provider)
+                    }
+                }
+            }
+            if !store.ruleTargetNodes.isEmpty {
+                Section("节点") {
+                    ForEach(store.ruleTargetNodes, id: \.self) { target in
+                        targetButton(target, kind: "node", provider: provider)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text("→ \(provider.target)")
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(T.accent)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2.5)
+            .background(T.accent.opacity(0.12))
+            .clipShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(store.connected ? "选择命中该规则文件后使用的分组或节点" : "启动并连接内核后可选择节点和分组")
+    }
+
+    private func targetButton(_ target: String, kind: String, provider: RuleProvider) -> some View {
+        Button {
+            Task { await store.updateRuleProviderTarget(provider, target: target, kind: kind) }
+        } label: {
+            HStack {
+                Text(target)
+                if provider.target == target && provider.targetKind == kind {
+                    Image(systemName: "checkmark")
+                }
+            }
+        }
+    }
+
+    private func importLocalRuleProviders() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [
+            .yaml,
+            .plainText,
+            UTType(filenameExtension: "mrs") ?? .data
+        ]
+        panel.allowsOtherFileTypes = true
+        panel.message = "选择 YAML、文本、base64/gfwlist 或 MRS 规则集文件"
+        if panel.runModal() == .OK {
+            let urls = panel.urls
+            Task {
+                for url in urls {
+                    await store.importLocalRuleProvider(from: url)
+                }
+            }
+        }
     }
 }

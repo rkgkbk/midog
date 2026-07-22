@@ -3,6 +3,12 @@ import Foundation
 // ============ 默认值（与旧版 config-generator.js 保持一致） ============
 
 enum Defaults {
+    /// 旧版本把国内 DoH 当作业务 DNS；仅用于识别并迁移未自定义过的配置。
+    static let legacyNameservers: JSONValue = .array([
+        .string("https://223.5.5.5/dns-query"),
+        .string("https://doh.pub/dns-query")
+    ])
+
     static let settings: [String: JSONValue] = [
         // 端口：mixed-port 同时提供 HTTP/SOCKS；port / socks-port 为 0 表示不单独开
         "mixed-port": .number(7891),
@@ -27,6 +33,7 @@ enum Defaults {
         "enable": .bool(true),
         "listen": .string("127.0.0.1:9053"),
         "ipv6": .bool(false),
+        "respect-rules": .bool(false),
         "enhanced-mode": .string("fake-ip"),
         "fake-ip-range": .string("198.18.0.1/16"),
         "fake-ip-filter": .array([
@@ -35,10 +42,16 @@ enum Defaults {
             .string("time.*.com"), .string("ntp.*.com"), .string("+.pool.ntp.org"),
             .string("localhost.ptlogin2.qq.com")
         ]),
+        // 只负责 DNS 服务和代理节点域名的引导解析，避免代理尚未建立时产生循环依赖。
         "default-nameserver": .array([.string("223.5.5.5"), .string("119.29.29.29")]),
-        "nameserver": .array([
+        "proxy-server-nameserver": .array([
             .string("https://223.5.5.5/dns-query"),
             .string("https://doh.pub/dns-query")
+        ]),
+        // 普通域名查询固定经 PROXY 访问境外 DoH，避免运营商/国内公共 DNS 泄漏。
+        "nameserver": .array([
+            .string("https://1.1.1.1/dns-query#PROXY"),
+            .string("https://8.8.8.8/dns-query#PROXY")
         ])
     ]
 
@@ -70,7 +83,19 @@ enum Defaults {
 let FINAL_TARGETS = ["PROXY", "AUTO", "DIRECT", "REJECT"]
 let RULE_BEHAVIORS = ["classical", "domain", "ipcidr"]
 let RULE_FORMATS = ["yaml", "text", "mrs"]
+let RULE_TARGET_KINDS = ["builtin", "group", "node"]
 let HEALTH_CHECK_URL = "http://www.gstatic.com/generate_204"
+
+/// RULE-SET 的目标可以是内置策略、策略组或具体节点。
+/// 逗号和换行会破坏 mihomo 的 `RULE-SET,name,target` 语法，因此不接受。
+func normalizedRuleTarget(_ value: String) -> String? {
+    let target = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !target.isEmpty,
+          !target.contains(","),
+          !target.contains("\n"),
+          !target.contains("\r") else { return nil }
+    return target
+}
 
 // ============ 数据模型（与旧版 data.json v2 结构兼容） ============
 
@@ -113,19 +138,26 @@ struct RuleProvider: Codable, Identifiable, Equatable {
     var converted: Bool         // true = mihomo 不认原始内容，由 App 下载转换为本地 file provider
     var sourceFormat: String?
     var target: String
+    var targetKind: String       // builtin / group / node
     var interval: Int
     var viaProxy: Bool
     var enabled: Bool
     var convertedUpdatedAt: String?   // 转换型规则集最近一次拉取上游的时间
 
     var id: String { name }
+    var isLocal: Bool { url.hasPrefix("local://") }
+
+    var sourceDisplayText: String {
+        isLocal ? "本地 · \(String(url.dropFirst("local://".count)))" : url
+    }
 
     var fileExtension: String {
         format == "mrs" ? ".mrs" : (format == "text" ? ".txt" : ".yaml")
     }
 
     init(name: String, url: String, behavior: String, format: String, converted: Bool,
-         sourceFormat: String?, target: String, interval: Int, viaProxy: Bool, enabled: Bool,
+         sourceFormat: String?, target: String, targetKind: String = "builtin",
+         interval: Int, viaProxy: Bool, enabled: Bool,
          convertedUpdatedAt: String? = nil) {
         self.name = name
         self.url = url
@@ -134,6 +166,7 @@ struct RuleProvider: Codable, Identifiable, Equatable {
         self.converted = converted
         self.sourceFormat = sourceFormat
         self.target = target
+        self.targetKind = RULE_TARGET_KINDS.contains(targetKind) ? targetKind : "builtin"
         self.interval = interval
         self.viaProxy = viaProxy
         self.enabled = enabled
@@ -149,6 +182,9 @@ struct RuleProvider: Codable, Identifiable, Equatable {
         converted = (try? c.decode(Bool.self, forKey: .converted)) ?? false
         sourceFormat = try? c.decodeIfPresent(String.self, forKey: .sourceFormat)
         target = (try? c.decode(String.self, forKey: .target)) ?? "PROXY"
+        let decodedKind = try? c.decode(String.self, forKey: .targetKind)
+        targetKind = decodedKind.flatMap { RULE_TARGET_KINDS.contains($0) ? $0 : nil }
+            ?? (FINAL_TARGETS.contains(target) ? "builtin" : "group")
         interval = (try? c.decode(Int.self, forKey: .interval)) ?? 86400
         viaProxy = (try? c.decode(Bool.self, forKey: .viaProxy)) ?? false
         enabled = (try? c.decode(Bool.self, forKey: .enabled)) ?? true
@@ -175,6 +211,10 @@ struct AppData: Codable {
         settings = Defaults.settings.merging(rawSettings) { _, new in new }
         let rawDns = (try? c.decode([String: JSONValue].self, forKey: .dns)) ?? [:]
         dns = Defaults.dns.merging(rawDns) { _, new in new }
+        // 升级旧版默认 DNS；用户自行填写的 nameserver 保持不变。
+        if rawDns["nameserver"] == Defaults.legacyNameservers {
+            dns["nameserver"] = Defaults.dns["nameserver"]
+        }
         hosts = (try? c.decode([String: JSONValue].self, forKey: .hosts)) ?? [:]
         let rawTun = (try? c.decode([String: JSONValue].self, forKey: .tun)) ?? [:]
         tun = Defaults.tun.merging(rawTun) { _, new in new }

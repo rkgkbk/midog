@@ -788,7 +788,38 @@ final class Store: ObservableObject {
         var behavior = "auto"
         var format = "auto"
         var target = "PROXY"
+        var targetKind = "builtin"
         var viaProxy = true
+    }
+
+    /// 规则目标选择器中可用的策略组；固定目标单独展示，避免重复。
+    var ruleTargetGroups: [String] {
+        let fixed = Set(FINAL_TARGETS)
+        let names = proxies.compactMap { name, proxy in
+            proxy.isGroup && proxy.hidden != true
+                && !name.hasPrefix("__MIDOG_RULE_NODE_")
+                && !fixed.contains(name)
+                && normalizedRuleTarget(name) != nil ? name : nil
+        }
+        return names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    /// provider 节点不一定出现在 /proxies 顶层，从所有策略组的成员中一并收集。
+    var ruleTargetNodes: [String] {
+        let groupNames = Set(proxies.compactMap { $0.value.isGroup ? $0.key : nil })
+        let reserved = Set(FINAL_TARGETS + ["GLOBAL", "PASS", "COMPATIBLE"])
+        var names = Set<String>()
+        for proxy in proxies.values {
+            for name in proxy.all ?? [] where !groupNames.contains(name)
+                && !reserved.contains(name) && normalizedRuleTarget(name) != nil {
+                names.insert(name)
+            }
+        }
+        for (name, proxy) in proxies where !proxy.isGroup
+            && !reserved.contains(name) && normalizedRuleTarget(name) != nil {
+            names.insert(name)
+        }
+        return names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
     func addRuleProvider(_ form: RuleProviderForm) async -> Bool {
@@ -854,7 +885,8 @@ final class Store: ObservableObject {
             format: format ?? "yaml",
             converted: converted,
             sourceFormat: sourceFormat,
-            target: FINAL_TARGETS.contains(form.target) ? form.target : "PROXY",
+            target: normalizedRuleTarget(form.target) ?? "PROXY",
+            targetKind: RULE_TARGET_KINDS.contains(form.targetKind) ? form.targetKind : "builtin",
             interval: 86400,
             viaProxy: form.viaProxy,
             enabled: true,
@@ -893,6 +925,110 @@ final class Store: ObservableObject {
         return true
     }
 
+    /// 导入本地规则集并复制到 App 数据目录，避免依赖原文件后续是否仍然存在。
+    func importLocalRuleProvider(from sourceURL: URL) async {
+        let accessing = sourceURL.startAccessingSecurityScopedResource()
+        defer { if accessing { sourceURL.stopAccessingSecurityScopedResource() } }
+
+        let originalName = sourceURL.lastPathComponent
+        let ext = sourceURL.pathExtension.lowercased()
+        var baseName = sourceURL.deletingPathExtension().lastPathComponent
+            .replacingOccurrences(of: "[^a-zA-Z0-9._-]", with: "_", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "._-"))
+        if baseName.isEmpty { baseName = "ruleset" }
+        let name = uniqueRuleProviderName(baseName)
+
+        do {
+            let provider: RuleProvider
+            let cachedURL: URL
+            if ext == "mrs" {
+                let behavior = originalName.range(of: "(^|[._-])(ip|cidr)([._-]|$)",
+                                                   options: [.regularExpression, .caseInsensitive]) != nil
+                    ? "ipcidr" : "domain"
+                cachedURL = AppPaths.ruleProvidersDir.appendingPathComponent(name + ".mrs")
+                try Data(contentsOf: sourceURL).write(to: cachedURL, options: .atomic)
+                provider = RuleProvider(
+                    name: name, url: "local://\(originalName)", behavior: behavior,
+                    format: "mrs", converted: true, sourceFormat: "local-mrs",
+                    target: "PROXY", interval: 86400, viaProxy: false, enabled: true,
+                    convertedUpdatedAt: isoNow())
+            } else {
+                let raw = try String(contentsOf: sourceURL, encoding: .utf8)
+                let analysis: RulesetParser.Analysis
+                switch RulesetParser.analyze(raw) {
+                case .failure(let error):
+                    toast("导入规则集失败: \(error.localizedDescription)", error: true)
+                    return
+                case .success(let result):
+                    analysis = result
+                }
+                let fileExtension = analysis.format == "text" ? ".txt" : ".yaml"
+                cachedURL = AppPaths.ruleProvidersDir.appendingPathComponent(name + fileExtension)
+                try analysis.text.write(to: cachedURL, atomically: true, encoding: .utf8)
+                provider = RuleProvider(
+                    name: name, url: "local://\(originalName)", behavior: analysis.behavior,
+                    format: analysis.format, converted: true,
+                    sourceFormat: "local-\(analysis.sourceFormat)", target: "PROXY",
+                    interval: 86400, viaProxy: false, enabled: true,
+                    convertedUpdatedAt: isoNow())
+            }
+
+            data.ruleProviders.append(provider)
+            saveData()
+            let apply = await applyChanges()
+            if let error = apply.error {
+                data.ruleProviders.removeAll { $0.name == name }
+                saveData()
+                try? FileManager.default.removeItem(at: cachedURL)
+                _ = generateConfig()
+                toast("导入规则集失败: \(error)", error: true)
+            } else {
+                toast("已导入本地规则集: \(name)\(apply.note)")
+            }
+            await refreshRuleRuntime()
+        } catch {
+            toast("导入规则集失败: \(error.localizedDescription)", error: true)
+        }
+    }
+
+    private func uniqueRuleProviderName(_ baseName: String) -> String {
+        let existing = Set(data.ruleProviders.map(\.name))
+        if !existing.contains(baseName) { return baseName }
+        var suffix = 2
+        while existing.contains("\(baseName)-\(suffix)") { suffix += 1 }
+        return "\(baseName)-\(suffix)"
+    }
+
+    /// 修改已有规则文件的出站目标，失败时恢复原值，避免持久化数据与运行配置不一致。
+    func updateRuleProviderTarget(_ provider: RuleProvider, target rawTarget: String, kind: String) async {
+        guard let target = normalizedRuleTarget(rawTarget) else {
+            toast("规则目标无效", error: true)
+            return
+        }
+        guard RULE_TARGET_KINDS.contains(kind) else {
+            toast("规则目标类型无效", error: true)
+            return
+        }
+        guard let idx = data.ruleProviders.firstIndex(where: { $0.name == provider.name }) else { return }
+        let previous = data.ruleProviders[idx].target
+        let previousKind = data.ruleProviders[idx].targetKind
+        guard previous != target || previousKind != kind else { return }
+
+        data.ruleProviders[idx].target = target
+        data.ruleProviders[idx].targetKind = kind
+        saveData()
+        let apply = await applyChanges()
+        if let error = apply.error {
+            data.ruleProviders[idx].target = previous
+            data.ruleProviders[idx].targetKind = previousKind
+            saveData()
+            _ = generateConfig()
+            toast("切换规则目标失败，已恢复为 \(previous)：\(error)", error: true)
+        } else {
+            toast("\(provider.name) 命中后走 \(target)\(apply.note)")
+        }
+    }
+
     func toggleRuleProvider(_ provider: RuleProvider, enabled: Bool) async {
         guard let idx = data.ruleProviders.firstIndex(where: { $0.name == provider.name }) else { return }
         data.ruleProviders[idx].enabled = enabled
@@ -908,7 +1044,7 @@ final class Store: ObservableObject {
 
     func refreshRuleProvider(_ provider: RuleProvider) async {
         toast("正在刷新规则集: \(provider.name)")
-        if provider.converted {
+        if provider.converted && !provider.isLocal {
             // 转换型：重新拉取上游 → 转换 → 落盘，再让内核重读文件
             do {
                 let raw = try await SubscriptionParser.download(provider.url)
@@ -970,7 +1106,7 @@ final class Store: ObservableObject {
     /// 转换型规则集按 interval 定期重新拉取上游（旧版靠 mihomo 回源本地 HTTP 服务实现）
     func refreshStaleConvertedProviders() async {
         let formatter = ISO8601DateFormatter()
-        for provider in data.ruleProviders where provider.converted && provider.enabled {
+        for provider in data.ruleProviders where provider.converted && !provider.isLocal && provider.enabled {
             let last = provider.convertedUpdatedAt.flatMap { formatter.date(from: $0) } ?? .distantPast
             if Date().timeIntervalSince(last) > Double(max(provider.interval, 3600)) {
                 await refreshRuleProvider(provider)

@@ -5,6 +5,7 @@ struct ProxyNode: Decodable {
     var type: String?
     var now: String?
     var all: [String]?
+    var hidden: Bool?
 
     var isGroup: Bool {
         let t = (type ?? "").lowercased()
