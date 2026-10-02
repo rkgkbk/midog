@@ -121,8 +121,15 @@ struct RulesView: View {
                 .foregroundStyle(T.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
+            VStack(spacing: 0) {
+                ForEach(MANDATORY_RULE_PROVIDERS) { item in
+                    mandatoryProviderRow(item.provider)
+                    Rectangle().fill(T.line.opacity(0.6)).frame(height: 1)
+                }
+            }
+
             if store.data.ruleProviders.isEmpty {
-                Text("暂无规则集")
+                Text("暂无自定义规则集")
                     .font(.system(size: 12))
                     .foregroundStyle(T.muted)
                     .padding(.vertical, 14)
@@ -144,6 +151,47 @@ struct RulesView: View {
             await store.refreshRuleRuntime()
             await store.refreshProxies()
         }
+    }
+
+    /// 内置强制规则集：只读展示，没有开关和删除按钮
+    private func mandatoryProviderRow(_ provider: RuleProvider) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(T.muted)
+                .frame(width: 26)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 7) {
+                    Text(provider.name)
+                        .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                    Badge(text: provider.behavior, color: T.accent)
+                    Badge(text: "内置 · 强制 \(provider.target)", color: T.warn)
+                    if let rt = store.ruleRuntime[provider.name], let count = rt.ruleCount {
+                        Text("\(count) 条 · \(formatTimestamp(rt.updatedAt))")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(T.muted)
+                    } else if store.running {
+                        Text("未加载")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(T.muted)
+                    }
+                }
+                Text(provider.sourceDisplayText)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(T.muted.opacity(0.8))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer()
+
+            Text("不可修改")
+                .font(.system(size: 10.5))
+                .foregroundStyle(T.muted)
+        }
+        .padding(.vertical, 9)
+        .help("内置于 App 的强制规则集，排在所有用户规则之前，无法在界面中关闭或删除")
     }
 
     private func providerRow(_ provider: RuleProvider) -> some View {

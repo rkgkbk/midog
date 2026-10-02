@@ -12,6 +12,7 @@ struct SettingsView: View {
             VStack(spacing: 14) {
                 kernelCard
                 tunCard
+                egressSplitCard
                 settingsJSONCard
                 dataCard
             }
@@ -97,6 +98,145 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
+    }
+
+    // ---- 出口分流 ----
+
+    private var egressSplitCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                SectionTitle("出口分流 · 代理走 USB / 直连走 Wi-Fi")
+                Spacer()
+                if store.egressSplitOn {
+                    MiniButton(title: store.egressTesting ? "测试中…" : "测试出口",
+                               disabled: store.egressTesting) {
+                        Task { await store.testEgressSplit() }
+                    }
+                    MiniButton(title: "关闭分流") {
+                        Task { await store.toggleEgressSplit() }
+                    }
+                } else {
+                    AccentButton(title: "开启分流") {
+                        Task { await store.toggleEgressSplit() }
+                    }
+                }
+            }
+
+            Text("把代理节点固定绑到 iPhone USB 网卡拨号，直连流量固定走 Wi-Fi。开启时现场探测网卡编号并锁定。")
+                .font(.system(size: 11))
+                .foregroundStyle(T.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Rectangle().fill(T.line.opacity(0.6)).frame(height: 1)
+
+            if let split = store.egressSplit {
+                egressRow(role: "代理出口",
+                          label: split.proxyLabel,
+                          ip: store.splitProxyIP,
+                          missingHint: "网卡已断开")
+                egressRow(role: "直连出口",
+                          label: split.directLabel,
+                          ip: store.splitDirectIP,
+                          missingHint: "网卡已断开")
+
+                if store.egressSplitDegraded {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(T.bad)
+                        Text("\(split.proxyLabel) 已经掉线，所有代理节点都会连接失败。分流不会自动切回 Wi-Fi —— 请重新插上手机，或点右上角「关闭分流」。")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(T.bad)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(9)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(T.bad.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                } else {
+                    Text("拔掉手机后不会自动切换：代理会全部失败，需要手动关闭分流。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(T.muted)
+                }
+
+                if !store.egressChecks.isEmpty {
+                    Rectangle().fill(T.line.opacity(0.6)).frame(height: 1)
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(store.egressChecks) { check in
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: checkIcon(check.state))
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(checkColor(check.state))
+                                    .frame(width: 12)
+                                Text(check.title)
+                                    .font(.system(size: 11.5, weight: .medium))
+                                    .foregroundStyle(T.fg)
+                                    .frame(width: 108, alignment: .leading)
+                                Text(check.detail)
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(check.state == .pass ? T.muted : checkColor(check.state))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                            }
+                        }
+                    }
+                }
+            } else {
+                egressRow(role: "代理出口",
+                          label: store.detectedUSB?.label ?? "未检测到 USB 网卡",
+                          ip: store.detectedUSB?.ipv4,
+                          missingHint: store.detectedUSB == nil
+                            ? "用数据线连接 iPhone，并打开「个人热点 → 允许其他人加入」"
+                            : "没有取得 IP：系统设置 → 网络 → 该网卡 → 详细信息，关闭「除非需要，否则停用」")
+                egressRow(role: "直连出口",
+                          label: store.detectedWiFi?.label ?? "未检测到 Wi-Fi 网卡",
+                          ip: store.detectedWiFi?.ipv4,
+                          missingHint: "请先连上 Wi-Fi")
+                Text("当前未开启：全部出站由内核按系统默认路由处理。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(T.muted)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    private func checkIcon(_ state: EgressCheck.State) -> String {
+        switch state {
+        case .pass: return "checkmark.circle.fill"
+        case .warn: return "exclamationmark.circle.fill"
+        case .fail: return "xmark.circle.fill"
+        }
+    }
+
+    private func checkColor(_ state: EgressCheck.State) -> Color {
+        switch state {
+        case .pass: return T.ok
+        case .warn: return T.warn
+        case .fail: return T.bad
+        }
+    }
+
+    private func egressRow(role: String, label: String, ip: String?, missingHint: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(role)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(T.muted)
+                .frame(width: 56, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 7) {
+                    StatusDot(on: ip != nil, onColor: T.ok)
+                    Text(label)
+                        .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(ip != nil ? T.fg : T.warn)
+                }
+                Text(ip ?? missingHint)
+                    .font(.system(size: 11, design: ip != nil ? .monospaced : .default))
+                    .foregroundStyle(T.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
     }
 
     // ---- 系统配置 JSON ----

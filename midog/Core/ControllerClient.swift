@@ -17,6 +17,14 @@ struct ProxyNode: Decodable {
     }
 }
 
+/// /proxies/{name} 与 /providers/proxies 里单个出站的运行时信息。
+/// interface 就是内核实际会 bind 的网卡名，出口分流是否生效以它为准。
+struct ProxyDetail: Decodable {
+    var name: String?
+    var type: String?
+    var interface: String?
+}
+
 struct RuleProviderRuntime: Decodable {
     var ruleCount: Int?
     var updatedAt: String?
@@ -132,6 +140,24 @@ struct ControllerClient {
         return try JSONDecoder().decode([String: Int].self, from: result.1)
     }
 
+    /// 顶层出站的运行时详情（provider 内的节点不在这里，会 404）
+    func proxyDetail(_ name: String) async throws -> ProxyDetail {
+        let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
+        let result = try await send("GET", "/proxies/\(encoded)")
+        try expectOK(result)
+        return try JSONDecoder().decode(ProxyDetail.self, from: result.1)
+    }
+
+    /// 每个 proxy-provider 里的节点详情：provider 名 → 节点列表
+    func providerNodes() async throws -> [String: [ProxyDetail]] {
+        let result = try await send("GET", "/providers/proxies", timeout: 15)
+        try expectOK(result)
+        struct Entry: Decodable { var proxies: [ProxyDetail]? }
+        struct Wrapper: Decodable { var providers: [String: Entry] }
+        let wrapper = try JSONDecoder().decode(Wrapper.self, from: result.1)
+        return wrapper.providers.mapValues { $0.proxies ?? [] }
+    }
+
     // ---- 配置 ----
 
     func reload(configPath: String) async throws {
@@ -140,6 +166,16 @@ struct ControllerClient {
 
     func patchConfigs(_ patch: [String: Any]) async throws {
         try expectOK(await send("PATCH", "/configs", body: patch))
+    }
+
+    /// 内核当前实际生效的出站模式。App 侧的“锁定”只作用于 data.json / 生成配置这一层，
+    /// 内核的 REST API 本身并不知道这个约束——任何人直接 PATCH /configs 改 mode
+    /// 都会立刻绕过锁定，因此需要能读回内核的真实状态用于校验。
+    func currentMode() async throws -> String {
+        let result = try await send("GET", "/configs")
+        try expectOK(result)
+        struct C: Decodable { var mode: String? }
+        return (try JSONDecoder().decode(C.self, from: result.1).mode ?? "").lowercased()
     }
 
     // ---- providers ----
@@ -163,6 +199,16 @@ struct ControllerClient {
         try expectOK(result)
         struct Wrapper: Decodable { var providers: [String: RuleProviderRuntime] }
         return try JSONDecoder().decode(Wrapper.self, from: result.1).providers
+    }
+
+    /// 内核当前生效的第一条规则（"类型,载荷,目标"），用来确认强制规则仍排在最前
+    func firstRule() async throws -> String? {
+        let result = try await send("GET", "/rules")
+        try expectOK(result)
+        struct R: Decodable { var type: String; var payload: String; var proxy: String }
+        struct Wrapper: Decodable { var rules: [R] }
+        return try JSONDecoder().decode(Wrapper.self, from: result.1).rules.first
+            .map { "\($0.type),\($0.payload),\($0.proxy)" }
     }
 
     // ---- 运行信息 ----

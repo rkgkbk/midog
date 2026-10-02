@@ -302,6 +302,7 @@ struct TopBar: View {
 
             ModeSegment()
             TunPill()
+            EgressPill()
 
             HStack(spacing: 8) {
                 if store.running {

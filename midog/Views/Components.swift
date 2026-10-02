@@ -122,17 +122,26 @@ struct ModeSegment: View {
         HStack(spacing: 0) {
             ForEach(["rule", "global", "direct"], id: \.self) { mode in
                 let active = store.data.mode == mode
+                let locked = mode != LOCKED_MODE   // 只有规则模式可用，其余为锁定项
                 Button {
                     Task { await store.setMode(mode) }
                 } label: {
-                    Text(Self.modeTitle(mode))
-                        .font(.system(size: 11, weight: active ? .semibold : .regular))
-                        .foregroundStyle(active ? Color(hex: 0x0C1417) : T.muted)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 6)
-                        .background(active ? T.accent : .clear)
+                    HStack(spacing: 4) {
+                        if locked {
+                            Image(systemName: "lock.fill").font(.system(size: 8.5))
+                        }
+                        Text(Self.modeTitle(mode))
+                    }
+                    .font(.system(size: 11, weight: active ? .semibold : .regular))
+                    .foregroundStyle(active ? Color(hex: 0x0C1417) : T.muted)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 6)
+                    .background(active ? T.accent : .clear)
                 }
                 .buttonStyle(.plain)
+                .disabled(locked)
+                .opacity(locked ? 0.4 : 1)
+                .help(locked ? "出站模式已锁定为规则模式：全局 / 直连会绕过全部分流规则" : "")
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 7))
@@ -182,6 +191,73 @@ struct TunPill: View {
         }
         .buttonStyle(.plain)
         .help(store.privileged ? "接管系统全部流量" : "开启 TUN 需要先给内核提权（见「设置」）")
+    }
+}
+
+/// 出口分流开关（代理走 USB / 直连走 Wi-Fi），与代理开关同排
+struct EgressPill: View {
+    @EnvironmentObject var store: Store
+
+    private var on: Bool { store.egressSplitOn }
+    private var degraded: Bool { store.egressSplitDegraded }
+
+    private var tint: Color {
+        if degraded { return T.bad }
+        return on ? T.accent : T.muted
+    }
+
+    var body: some View {
+        Button {
+            Task { await store.toggleEgressSplit() }
+        } label: {
+            HStack(spacing: 8) {
+                Text("分流")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(T.muted)
+                ZStack(alignment: on ? .trailing : .leading) {
+                    Capsule()
+                        .fill(on ? (degraded ? T.bad : T.accent) : T.panel2)
+                        .frame(width: 32, height: 18)
+                        .overlay(Capsule().stroke(T.line, lineWidth: 1))
+                    Circle()
+                        .fill(on ? Color(hex: 0x0E1519) : T.muted)
+                        .frame(width: 13, height: 13)
+                        .padding(.horizontal, 2.5)
+                }
+                .animation(.easeInOut(duration: 0.15), value: on)
+                if degraded {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(T.bad)
+                }
+                Text(label)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(tint)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(degraded ? T.bad.opacity(0.5) : T.line, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help(helpText)
+    }
+
+    private var label: String {
+        guard let split = store.egressSplit else { return "OFF" }
+        return degraded ? "断开" : split.proxyInterface
+    }
+
+    private var helpText: String {
+        guard let split = store.egressSplit else {
+            if let usb = store.detectedUSB, usb.active {
+                return "开启后代理走 \(usb.label)，直连走 \(store.detectedWiFi?.label ?? "Wi-Fi")"
+            }
+            return "代理走 USB 手机热点，直连走 Wi-Fi。当前没有可用的 USB 网卡"
+        }
+        if degraded {
+            return "\(split.proxyLabel) 已断开，代理全部不可用且不会自动回落，点此关闭分流"
+        }
+        return "代理 → \(split.proxyLabel)，直连 → \(split.directLabel)。详情见「设置 → 出口分流」"
     }
 }
 

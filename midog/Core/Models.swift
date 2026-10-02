@@ -3,11 +3,19 @@ import Foundation
 // ============ 默认值（与旧版 config-generator.js 保持一致） ============
 
 enum Defaults {
-    /// 旧版本把国内 DoH 当作业务 DNS；仅用于识别并迁移未自定义过的配置。
-    static let legacyNameservers: JSONValue = .array([
-        .string("https://223.5.5.5/dns-query"),
-        .string("https://doh.pub/dns-query")
-    ])
+    /// 历史版本的默认 nameserver；仅用于识别并迁移未自定义过的配置。
+    static let legacyNameservers: [JSONValue] = [
+        // 旧版本把国内 DoH 当作业务 DNS
+        .array([
+            .string("https://223.5.5.5/dns-query"),
+            .string("https://doh.pub/dns-query")
+        ]),
+        // 上一版走代理的普通 DoH（无恶意站点过滤）
+        .array([
+            .string("https://1.1.1.1/dns-query#PROXY"),
+            .string("https://8.8.8.8/dns-query#PROXY")
+        ])
+    ]
 
     static let settings: [String: JSONValue] = [
         // 端口：mixed-port 同时提供 HTTP/SOCKS；port / socks-port 为 0 表示不单独开
@@ -48,10 +56,16 @@ enum Defaults {
             .string("https://223.5.5.5/dns-query"),
             .string("https://doh.pub/dns-query")
         ]),
+        // DIRECT 出口使用国内 DNS，避免直连域名仍通过代理侧的境外 DNS 解析。
+        "direct-nameserver": .array([
+            .string("https://223.5.5.5/dns-query"),
+            .string("https://doh.pub/dns-query")
+        ]),
         // 普通域名查询固定经 PROXY 访问境外 DoH，避免运营商/国内公共 DNS 泄漏。
+        // 使用 Cloudflare for Families（1.1.1.3 / 1.0.0.3），在解析层拦截恶意站点与成人内容。
         "nameserver": .array([
-            .string("https://1.1.1.1/dns-query#PROXY"),
-            .string("https://8.8.8.8/dns-query#PROXY")
+            .string("https://1.1.1.3/dns-query#PROXY"),
+            .string("https://1.0.0.3/dns-query#PROXY")
         ])
     ]
 
@@ -80,11 +94,100 @@ enum Defaults {
     ]
 }
 
+/// 允许写进生成配置的基础设置项。其余顶层 key（listeners、sub-rules、tunnels 等）
+/// 可以开出不经过 rules 的入站，一律丢弃。
+let ALLOWED_SETTINGS_KEYS = Set(Defaults.settings.keys)
+
 let FINAL_TARGETS = ["PROXY", "AUTO", "DIRECT", "REJECT"]
 let RULE_BEHAVIORS = ["classical", "domain", "ipcidr"]
 let RULE_FORMATS = ["yaml", "text", "mrs"]
 let RULE_TARGET_KINDS = ["builtin", "group", "node"]
+
+/// 内置强制规则集：不存进 data.json，由 ConfigGenerator 每次生成时无条件写入，
+/// 因此在 App 界面里无法关闭/删除，手改 data.json 也不会生效——只能改代码重新编译。
+/// 对应规则在 rules 里排在所有用户规则之前，用户规则无法把它挡掉。
+struct MandatoryRuleProvider: Identifiable {
+    let provider: RuleProvider
+    /// App bundle 内的兜底副本：缓存文件缺失（首次运行 / 被手动删掉）时复制过去，
+    /// 避免下载失败时规则集为空导致放行。
+    let bundledResource: String
+    let bundledExtension: String
+    /// 内核加载后规则条数低于此值就认为缓存被替换/损坏，用兜底副本覆盖并重载。
+    /// 取上游列表当前条数（约 6500）的一半，留足上游自然缩水的余量。
+    let minimumRuleCount: Int
+    /// 兜底副本自身的预期 SHA-256。App 包内的资源被换成空表时，兜底就成了帮凶，
+    /// 因此复制之前先验一次哈希；不匹配宁可不恢复，也不把假规则写进缓存。
+    /// 换上游文件时必须同步更新这里：shasum -a 256 midog/Resources/<file>
+    let bundledSHA256: String
+
+    var id: String { provider.name }
+
+    var bundledURL: URL? {
+        Bundle.main.url(forResource: bundledResource, withExtension: bundledExtension)
+    }
+}
+
+let MANDATORY_RULE_PROVIDERS: [MandatoryRuleProvider] = [
+    MandatoryRuleProvider(
+        provider: RuleProvider(
+            name: "__MIDOG_ADULT_BLOCK",
+            url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-porn.list",
+            behavior: "domain",
+            // 用 text 而不是 mrs：mihomo 对 mrs 规则集的 ruleCount 恒为 0，
+            // 条数校验（Store.enforceMandatoryRuleProviders）就失去了信号。
+            format: "text",
+            // converted = type: file：只读 App 维护的、与包内副本哈希一致的缓存，不回源下载
+            converted: true,
+            sourceFormat: nil,
+            target: "REJECT",
+            interval: 86400,
+            viaProxy: true,   // GitHub 直连可能失败，固定走代理下载
+            enabled: true
+        ),
+        bundledResource: "category-porn",
+        bundledExtension: "list",
+        minimumRuleCount: 3000,
+        bundledSHA256: "c9504ff281807e51adc904bda2dd18befa9d5e40765a5671a957cc891336962d"
+    )
+]
+
+/// 出站模式锁定为 rule：global / direct 会让 rules 整段失效，内置强制规则也就跟着失效。
+let LOCKED_MODE = "rule"
+
 let HEALTH_CHECK_URL = "http://www.gstatic.com/generate_204"
+
+/// 出口分流开启时生成的直连出站名：显式绑定 Wi-Fi 网卡，
+/// 不再依赖 tun.auto-detect-interface 猜默认网卡。
+let DIRECT_WIFI_PROXY = "DIRECT-WIFI"
+
+/// 出口分流：代理节点固定从 USB 网卡拨号，直连固定从 Wi-Fi 网卡出去。
+///
+/// 网卡名（en5）会随拔插变化，所以这里记下开启当时探测到的名字并固定下来，
+/// 之后**不再自动跟随**：拔掉手机就是所有代理节点 dial 失败，
+/// 由用户看到提示后手动关闭——绝不在用户不知情时把代理流量偷偷换到 Wi-Fi 上。
+struct EgressSplit: Codable, Equatable {
+    var proxyInterface: String      // 代理节点绑定的网卡，如 en5
+    var proxyLabel: String          // 展示用，如 "iPhone USB (en5)"
+    var directInterface: String     // 直连绑定的网卡，如 en0
+    var directLabel: String         // 展示用，如 "Wi-Fi (en0)"
+    var enabledAt: String
+
+    var isValid: Bool {
+        !proxyInterface.isEmpty && !directInterface.isEmpty && proxyInterface != directInterface
+    }
+}
+
+/// 生成 external-controller 的默认认证密钥。
+/// secret 留空时 mihomo 的 REST API 不做任何认证，本机任何进程（包括网页里的 fetch）
+/// 都能直接打 127.0.0.1:9090，比如 PATCH /configs 把出站模式改成 global 绕过锁定；
+/// 因此每套 data.json 首次生成时都必须带一个随机密钥，而不是让用户来选。
+/// SystemRandomNumberGenerator 在 Darwin 上由内核 CSPRNG (arc4random) 提供，适合生成密钥。
+func generateControllerSecret() -> String {
+    var rng = SystemRandomNumberGenerator()
+    var bytes = [UInt8](repeating: 0, count: 24)
+    for i in bytes.indices { bytes[i] = UInt8.random(in: UInt8.min...UInt8.max, using: &rng) }
+    return bytes.map { String(format: "%02x", $0) }.joined()
+}
 
 /// RULE-SET 的目标可以是内置策略、策略组或具体节点。
 /// 逗号和换行会破坏 mihomo 的 `RULE-SET,name,target` 语法，因此不接受。
@@ -201,18 +304,28 @@ struct AppData: Codable {
     var sources: [Source] = []
     var ruleProviders: [RuleProvider] = []
     var finalTarget: String = "PROXY"
+    /// nil = 出口分流关闭（全部出站交给内核按默认路由处理）
+    var egressSplit: EgressSplit?
 
-    init() {}
+    init() {
+        settings["secret"] = .string(generateControllerSecret())
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = 2
         let rawSettings = (try? c.decode([String: JSONValue].self, forKey: .settings)) ?? [:]
         settings = Defaults.settings.merging(rawSettings) { _, new in new }
+        settings["mode"] = .string(LOCKED_MODE) // 手改 data.json 也改不动出站模式
+        // secret 缺失/为空（全新安装，或升级自没有认证的旧版本）时补一个随机密钥，
+        // 绝不把 external-controller 落回无认证状态。
+        if (settings["secret"]?.stringValue ?? "").isEmpty {
+            settings["secret"] = .string(generateControllerSecret())
+        }
         let rawDns = (try? c.decode([String: JSONValue].self, forKey: .dns)) ?? [:]
         dns = Defaults.dns.merging(rawDns) { _, new in new }
         // 升级旧版默认 DNS；用户自行填写的 nameserver 保持不变。
-        if rawDns["nameserver"] == Defaults.legacyNameservers {
+        if let ns = rawDns["nameserver"], Defaults.legacyNameservers.contains(ns) {
             dns["nameserver"] = Defaults.dns["nameserver"]
         }
         hosts = (try? c.decode([String: JSONValue].self, forKey: .hosts)) ?? [:]
@@ -223,12 +336,16 @@ struct AppData: Codable {
             .filter { !$0.name.isEmpty && !$0.url.isEmpty }
         let ft = (try? c.decode(String.self, forKey: .finalTarget)) ?? "PROXY"
         finalTarget = FINAL_TARGETS.contains(ft) ? ft : "PROXY"
+        // 手改 data.json 写进来的残缺配置会让内核直接加载失败，这里挡掉
+        let split = (try? c.decodeIfPresent(EgressSplit.self, forKey: .egressSplit)) ?? nil
+        egressSplit = (split?.isValid ?? false) ? split : nil
     }
 
     // ---- 常用访问 ----
+    /// 恒为 LOCKED_MODE：写入被忽略，读出也不受 data.json 里的值影响。
     var mode: String {
-        get { settings["mode"]?.stringValue?.lowercased() ?? "rule" }
-        set { settings["mode"] = .string(newValue) }
+        get { LOCKED_MODE }
+        set { settings["mode"] = .string(LOCKED_MODE) }
     }
 
     var externalController: String {
