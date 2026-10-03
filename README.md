@@ -38,6 +38,14 @@
 | **设置** | 内核 JSON 配置（端口 / DNS / hosts 等）保存后**热重载不重启**；随应用自动启动内核；一键 TUN 提权 |
 | **菜单栏** | 常驻状态栏图标，关窗不退出，随时唤起主窗口 |
 
+### 系统内容过滤
+
+macOS 版同时把内置 `category-porn.list` 打进内容过滤系统扩展。扩展按域名阻断可识别的连接；mihomo 仍使用同一规则文件处理代理和 TUN 流量。退出 App 或内核不会主动关闭已启用的系统扩展。
+
+正式发布时需给 App 和 `midogFilter` target 配置同一个 Apple Developer Team、签名，并把签名后的 App 安装到 `/Applications`。首次启动要在系统设置中批准系统扩展和内容过滤。Debug 使用开发签名权限，Release 使用 Developer ID 系统扩展权限；发布包还需公证。未签名构建只能用于编译检查，不能安装系统扩展。扩展目前使用随 App 发布的规则快照，更新列表需发布新版 App。过滤器无法从每条网络连接取得域名，代理流量仍由 mihomo 规则兜底。
+
+仅在已关闭 SIP 的本机开发环境，可运行 `scripts/build-local-filter.sh` 生成临时签名的测试 App；这只验证构建和签名，不保证 NetworkExtension 接受未获授权的权限，也不能用于发布。开启系统扩展开发模式可跳过 App 必须位于「应用程序」目录的检查：`systemextensionsctl developer on`。测试结束后应恢复 SIP。
+
 ## 系统要求
 
 - macOS 15 (Sequoia) 或更高版本

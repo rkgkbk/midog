@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureApplicationIcon()
         configureStatusItem()
+        ContentFilterInstaller.shared.install()
 
         NotificationCenter.default.addObserver(
             self,

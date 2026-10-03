@@ -11,6 +11,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(spacing: 14) {
                 kernelCard
+                filterCard
                 tunCard
                 egressSplitCard
                 settingsJSONCard
@@ -69,6 +70,27 @@ struct SettingsView: View {
     }
 
     // ---- TUN 提权 ----
+
+    private var filterCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                SectionTitle("系统内容过滤")
+                Spacer()
+                MiniButton(title: store.contentFilterBusy ? "授权中…" : "授权 / 重试",
+                           disabled: store.contentFilterBusy) {
+                    ContentFilterInstaller.shared.install()
+                }
+            }
+            Text(store.contentFilterStatus)
+                .font(.system(size: 12.5))
+                .foregroundStyle(T.fg)
+            Text("独立拦截内置成人域名；mihomo 继续处理代理和分流规则。首次启用需在系统设置中批准。")
+                .font(.system(size: 11))
+                .foregroundStyle(T.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
 
     private var tunCard: some View {
         VStack(alignment: .leading, spacing: 10) {

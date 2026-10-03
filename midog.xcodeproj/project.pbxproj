@@ -6,8 +6,34 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* main.swift */; };
+		A10000000000000000000002 /* FilterDataProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* FilterDataProvider.swift */; };
+		A10000000000000000000005 /* Blocklist.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* Blocklist.swift */; };
+		A10000000000000000000003 /* category-porn.list in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* category-porn.list */; };
+		A10000000000000000000004 /* com.xx.midog.filter.systemextension in SystemExtensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* com.xx.midog.filter.systemextension */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A10000000000000000000021 /* SystemExtensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(SYSTEM_EXTENSIONS_FOLDER_PATH)";
+			dstSubfolderSpec = 16;
+			files = (A10000000000000000000004 /* com.xx.midog.filter.systemextension in SystemExtensions */, );
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		F57EF6D83008AFFF00113AE8 /* midog.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = midog.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000011 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A10000000000000000000012 /* FilterDataProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilterDataProvider.swift; sourceTree = "<group>"; };
+		A10000000000000000000013 /* category-porn.list */ = {isa = PBXFileReference; lastKnownFileType = text; path = "midog/Resources/category-porn.list"; sourceTree = SOURCE_ROOT; };
+		A10000000000000000000014 /* com.xx.midog.filter.systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; path = com.xx.midog.filter.systemextension; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A10000000000000000000016 /* midogFilter.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = midogFilter.entitlements; sourceTree = "<group>"; };
+		A10000000000000000000018 /* Blocklist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Blocklist.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -19,6 +45,7 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		A10000000000000000000022 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = ( ); runOnlyForDeploymentPostprocessing = 0; };
 		F57EF6D53008AFFF00113AE8 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -33,6 +60,7 @@
 			isa = PBXGroup;
 			children = (
 				F57EF6DA3008AFFF00113AE8 /* midog */,
+				A10000000000000000000017 /* midogFilter */,
 				F57EF6D93008AFFF00113AE8 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,8 +69,15 @@
 			isa = PBXGroup;
 			children = (
 				F57EF6D83008AFFF00113AE8 /* midog.app */,
+				A10000000000000000000014 /* com.xx.midog.filter.systemextension */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000017 /* midogFilter */ = {
+			isa = PBXGroup;
+			children = (A10000000000000000000011 /* main.swift */, A10000000000000000000012 /* FilterDataProvider.swift */, A10000000000000000000018 /* Blocklist.swift */, A10000000000000000000015 /* Info.plist */, A10000000000000000000016 /* midogFilter.entitlements */, );
+			path = midogFilter;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -55,11 +90,11 @@
 				F57EF6D43008AFFF00113AE8 /* Sources */,
 				F57EF6D53008AFFF00113AE8 /* Frameworks */,
 				F57EF6D63008AFFF00113AE8 /* Resources */,
+				A10000000000000000000021 /* SystemExtensions */,
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
+			dependencies = (A10000000000000000000026 /* PBXTargetDependency */, );
 			fileSystemSynchronizedGroups = (
 				F57EF6DA3008AFFF00113AE8 /* midog */,
 			);
@@ -70,7 +105,26 @@
 			productReference = F57EF6D83008AFFF00113AE8 /* midog.app */;
 			productType = "com.apple.product-type.application";
 		};
+		A10000000000000000000025 /* midogFilter */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000029 /* Build configuration list for PBXNativeTarget "midogFilter" */;
+			buildPhases = (A10000000000000000000023 /* Sources */, A10000000000000000000022 /* Frameworks */, A10000000000000000000024 /* Resources */, );
+			buildRules = ( );
+			dependencies = ( );
+			name = midogFilter;
+			productName = midogFilter;
+			productReference = A10000000000000000000014 /* com.xx.midog.filter.systemextension */;
+			productType = "com.apple.product-type.system-extension";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		A10000000000000000000027 /* PBXContainerItemProxy */ = {isa = PBXContainerItemProxy; containerPortal = F57EF6D03008AFFF00113AE8 /* Project object */; proxyType = 1; remoteGlobalIDString = A10000000000000000000025; remoteInfo = midogFilter; };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		A10000000000000000000026 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = A10000000000000000000025 /* midogFilter */; targetProxy = A10000000000000000000027 /* PBXContainerItemProxy */; };
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		F57EF6D03008AFFF00113AE8 /* Project object */ = {
@@ -83,6 +137,7 @@
 					F57EF6D73008AFFF00113AE8 = {
 						CreatedOnToolsVersion = 26.3;
 					};
+					A10000000000000000000025 = {CreatedOnToolsVersion = 26.3; };
 				};
 			};
 			buildConfigurationList = F57EF6D33008AFFF00113AE8 /* Build configuration list for PBXProject "midog" */;
@@ -100,11 +155,13 @@
 			projectRoot = "";
 			targets = (
 				F57EF6D73008AFFF00113AE8 /* midog */,
+				A10000000000000000000025 /* midogFilter */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		A10000000000000000000024 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000003 /* category-porn.list in Resources */, ); runOnlyForDeploymentPostprocessing = 0; };
 		F57EF6D63008AFFF00113AE8 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -115,6 +172,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		A10000000000000000000023 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* main.swift in Sources */, A10000000000000000000002 /* FilterDataProvider.swift in Sources */, A10000000000000000000005 /* Blocklist.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
 		F57EF6D43008AFFF00113AE8 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -247,6 +305,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = midog/midog-debug.entitlements;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -278,6 +337,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = midog/midog.entitlements;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -305,9 +365,48 @@
 			};
 			name = Release;
 		};
+		A1000000000000000000002A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = midogFilter/midogFilter-debug.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = midogFilter/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 15.7;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.xx.midog.filter;
+				PRODUCT_MODULE_NAME = midogFilter;
+				PRODUCT_NAME = com.xx.midog.filter;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+		};
+			name = Debug;
+		};
+		A1000000000000000000002B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = midogFilter/midogFilter.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = midogFilter/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 15.7;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.xx.midog.filter;
+				PRODUCT_MODULE_NAME = midogFilter;
+				PRODUCT_NAME = com.xx.midog.filter;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+		};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		A10000000000000000000029 /* Build configuration list for PBXNativeTarget "midogFilter" */ = {isa = XCConfigurationList; buildConfigurations = (A1000000000000000000002A /* Debug */, A1000000000000000000002B /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		F57EF6D33008AFFF00113AE8 /* Build configuration list for PBXProject "midog" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

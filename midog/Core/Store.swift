@@ -68,6 +68,8 @@ final class Store: ObservableObject {
     @Published var running = false
     @Published var pid: Int32?
     @Published var connected = false            // external-controller 可达
+    @Published var contentFilterStatus = "正在启用系统内容过滤"
+    @Published var contentFilterBusy = false
     @Published var coreVersion = ""
     @Published var startedAt: Date?
     @Published var proxies: [String: ProxyNode] = [:]
