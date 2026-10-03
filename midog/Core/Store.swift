@@ -72,6 +72,7 @@ final class Store: ObservableObject {
     @Published var delays: [String: DelayState] = [:]
     @Published var testingAll = false
     @Published var tunActive = false
+    private var tunMissingSince: Date?
     @Published var privileged = false
     @Published var logs: [LogEntry] = []
     @Published var upRate = 0
@@ -1185,7 +1186,9 @@ final class Store: ObservableObject {
         if let expectedFirst, let first = try? await client.firstRule(), first != expectedFirst {
             reasons.append("第一条规则变成了 \(first)")
         }
-        if data.tunEnabled && privileged && !tunActive {
+        let rulesChanged = !reasons.isEmpty
+        if data.tunEnabled && privileged && !tunActive,
+           let tunMissingSince, Date().timeIntervalSince(tunMissingSince) >= 10 {
             reasons.append("TUN 被外部关闭")
         }
         guard !reasons.isEmpty else { return }
@@ -1201,8 +1204,8 @@ final class Store: ObservableObject {
         if data.tunEnabled && privileged && !tunActive {
             try? await client.patchConfigs(["tun": Self.plainObject(data.tun)])
         }
-        appendLog(.system, "检测到 \(summary)，已恢复为 App 生成的配置")
-        toast("检测到拦截规则被篡改，已自动恢复", error: true)
+        appendLog(.system, "检测到 \(summary)，已尝试恢复")
+        toast(rulesChanged ? "检测到拦截规则异常，已尝试恢复" : "检测到 TUN 持续未运行，已尝试恢复", error: true)
     }
 
     // ============ 系统设置 ============
@@ -1424,6 +1427,11 @@ final class Store: ObservableObject {
         running = servicePID != nil
         privileged = CoreService.installed
         tunActive = await Self.tunInterfaceActive()
+        if running && data.tunEnabled && privileged && !tunActive {
+            if tunMissingSince == nil { tunMissingSince = Date() }
+        } else {
+            tunMissingSince = nil
+        }
         await refreshProxies()
         if connected {
             await enforceLockedMode()
