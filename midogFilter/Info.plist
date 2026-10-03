@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>NSSystemExtensionUsageDescription</key>
-    <string>独立拦截内置成人站点域名，即使 midog 或 mihomo 退出也继续过滤。</string>
+    <string>独立拦截内置成人站点域名，即使 midog 或 midog-core 退出也继续过滤。</string>
     <key>NetworkExtension</key>
     <dict>
         <key>NEProviderClasses</key>

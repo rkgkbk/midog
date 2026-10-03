@@ -1,9 +1,11 @@
 import Foundation
 
-/// launchd 是 mihomo 的唯一进程管理者；退出 midog 不影响内核。
+/// launchd 是 midog-core 的唯一进程管理者；退出 midog 不影响内核。
 nonisolated enum CoreService {
+    // 保留已安装服务的标识，升级时不会同时运行两个 job。
     static let label = "com.xx.midog.mihomo"
-    static let binary = "/Library/PrivilegedHelperTools/\(label)"
+    static let binary = "/Library/PrivilegedHelperTools/midog-core"
+    private static let legacyBinary = "/Library/PrivilegedHelperTools/\(label)"
     static let plist = "/Library/LaunchDaemons/\(label).plist"
 
     static var installed: Bool { FileManager.default.fileExists(atPath: plist) }
@@ -50,7 +52,7 @@ nonisolated enum CoreService {
         return nil
     }
 
-    /// 参数与原来的子进程启动完全相同：mihomo -d <dataDir>，工作目录也相同。
+    /// 参数与原来的子进程启动完全相同：midog-core -d <dataDir>，工作目录也相同。
     static func installAndStart(source: String, dataDir: URL) throws {
         let data = try PropertyListSerialization.data(fromPropertyList: job(dataDir: dataDir), format: .xml, options: 0)
         let staged = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".plist")
@@ -61,7 +63,8 @@ nonisolated enum CoreService {
         let command = "if /bin/launchctl print system/\(label) >/dev/null 2>&1; then /bin/launchctl bootout system/\(label) || exit; fi; "
             + "/usr/bin/install -o root -g wheel -m 755 \(Privileged.quoted(source)) \(Privileged.quoted(binary)) && "
             + "/usr/bin/install -o root -g wheel -m 644 \(Privileged.quoted(staged.path)) \(Privileged.quoted(plist)) && "
-            + "/bin/launchctl bootstrap system \(Privileged.quoted(plist))"
+            + "/bin/launchctl bootstrap system \(Privileged.quoted(plist)) && "
+            + "/bin/rm -f \(Privileged.quoted(legacyBinary))"
         try Privileged.run(command)
     }
 

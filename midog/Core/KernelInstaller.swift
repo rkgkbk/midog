@@ -1,10 +1,10 @@
 import CryptoKit
 import Foundation
 
-/// 内置 mihomo 内核的释放。root 权限由 launchd 系统服务提供。
+/// 内置 midog-core 内核的释放。root 权限由 launchd 系统服务提供。
 ///
 /// 内核以 gzip 压缩后打进 app 包，首次运行（以及内置版本升级后）解压到
-/// AppPaths.root/bin/mihomo，随后安装到 root 管理的服务路径。
+/// AppPaths.root/bin/midog-core，随后安装到 root 管理的服务路径。
 enum KernelInstaller {
     enum InstallError: LocalizedError {
         case missingBundledKernel
@@ -21,10 +21,15 @@ enum KernelInstaller {
     }
 
     /// app 包内置的内核（gzip）
-    nonisolated static var bundled: URL? { Bundle.main.url(forResource: "mihomo", withExtension: "gz") }
+    nonisolated static var bundled: URL? { Bundle.main.url(forResource: "midog-core", withExtension: "gz") }
 
     /// 解压后的内核位置
-    nonisolated static var installed: URL { AppPaths.root.appendingPathComponent("bin/mihomo", isDirectory: false) }
+    nonisolated static var installed: URL { AppPaths.root.appendingPathComponent("bin/midog-core", isDirectory: false) }
+    nonisolated static var legacyInstalled: URL { AppPaths.root.appendingPathComponent("bin/mihomo", isDirectory: false) }
+
+    nonisolated static func removeLegacyIfPresent() {
+        try? FileManager.default.removeItem(at: legacyInstalled)
+    }
 
     /// 记录已释放内核对应的压缩包哈希，避免每次启动都解压 43MB
     private nonisolated static var marker: URL { installed.deletingLastPathComponent().appendingPathComponent(".kernel-sha256") }

@@ -33,7 +33,7 @@ struct SettingsView: View {
             SectionTitle("内核")
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("midog 内核")
+                    Text("midog-core")
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(T.fg)
                     Text("应用内置，首次运行时释放到 \(store.kernelPath)")
@@ -70,7 +70,7 @@ struct SettingsView: View {
             Text(store.contentFilterStatus)
                 .font(.system(size: 12.5))
                 .foregroundStyle(T.fg)
-            Text("独立拦截内置成人域名；mihomo 继续处理代理和分流规则。首次启用需在系统设置中批准。")
+            Text("独立拦截内置成人域名；midog-core 继续处理代理和分流规则。首次启用需在系统设置中批准。")
                 .font(.system(size: 11))
                 .foregroundStyle(T.muted)
         }

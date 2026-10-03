@@ -326,6 +326,7 @@ final class Store: ObservableObject {
             try await Task.detached {
                 try CoreService.installAndStart(source: source, dataDir: AppPaths.dataDir)
             }.value
+            KernelInstaller.removeLegacyIfPresent()
             pid = await CoreService.waitForPID()
             running = pid != nil
             startedAt = running ? Date() : nil
@@ -337,7 +338,7 @@ final class Store: ObservableObject {
             if running {
                 toast("内核服务已启动")
             } else {
-                startupError = "launchd 已注册服务，但 mihomo 未启动。请检查 config.yaml 和 launchctl 服务状态。"
+                startupError = "launchd 已注册服务，但 midog-core 未启动。请检查 config.yaml 和 launchctl 服务状态。"
                 toast(startupError ?? "内核启动失败", error: true)
             }
             // 转换型规则集若超期，启动后顺手刷新
@@ -416,13 +417,14 @@ final class Store: ObservableObject {
             try await Task.detached {
                 try CoreService.installAndStart(source: source, dataDir: AppPaths.dataDir)
             }.value
+            KernelInstaller.removeLegacyIfPresent()
             pid = await CoreService.waitForPID()
             running = pid != nil
             startedAt = running ? Date() : nil
             connected = false
             stopTrafficStream()
             stopLogStream()
-            toast(running ? "内核已重启" : "launchd 重启后未发现 mihomo 进程", error: !running)
+            toast(running ? "内核已重启" : "launchd 重启后未发现 midog-core 进程", error: !running)
         } catch {
             toast(error.localizedDescription, error: true)
         }
@@ -482,7 +484,7 @@ final class Store: ObservableObject {
     /// 查出占用这些端口的进程。
     ///
     /// lsof 没有 setuid 位，跑起来只有本应用的权限，因而**看不到其他用户的进程**——
-    /// 而 mihomo 靠 setuid 跑成 root，上一次没退干净的内核恰恰是最常见的冲突源。
+    /// 而内核服务以 root 运行，上一次没退干净的内核恰恰是最常见的冲突源。
     /// 这类占用者只有 elevated 时才查得到，代价是弹一次授权框。
     nonisolated static func listeningProcesses(ports: [Int], elevated: Bool = false) throws -> [PortHolder] {
         guard !ports.isEmpty else { return [] }

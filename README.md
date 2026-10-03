@@ -23,7 +23,7 @@
 - **⚡ 简单易用** — 添加订阅、选节点、开代理，三步完成。规则、订阅、内核配置都有清晰的图形界面，也保留纯文本入口给进阶用户。
 - **🍎 macOS 原生** — 纯 SwiftUI + AppKit 编写，不是 Electron / Web 套壳。启动快、内存占用小、跟手流畅，完美适配深色模式与系统菜单栏。
 - **🎨 界面美观** — 精心设计的深色仪表盘：实时上下行速率曲线、活跃连接数、当前路由链路、内核日志一屏尽览。
-- **📦 开箱即用** — mihomo 内核内置于应用包内，首次运行自动释放，无需手动下载或配置内核。
+- **📦 开箱即用** — 基于 mihomo 的 `midog-core` 内核内置于应用包内，首次运行自动释放，无需手动下载或配置内核。
 - **🪶 零依赖** — 不引入任何第三方 Swift 包，代码轻量透明，易于审计和二次开发。
 
 ## 功能特性
@@ -40,9 +40,9 @@
 
 ### 系统内容过滤
 
-macOS 版同时把内置 `category-porn.list` 打进内容过滤系统扩展。扩展按域名阻断可识别的连接；mihomo 仍使用同一规则文件处理代理和 TUN 流量。退出 App 或内核不会主动关闭已启用的系统扩展。
+macOS 版同时把内置 `category-porn.list` 打进内容过滤系统扩展。扩展按域名阻断可识别的连接；midog-core 仍使用同一规则文件处理代理和 TUN 流量。退出 App 或内核不会主动关闭已启用的系统扩展。
 
-正式发布时需给 App 和 `midogFilter` target 配置同一个 Apple Developer Team、签名，并把签名后的 App 安装到 `/Applications`。首次启动要在系统设置中批准系统扩展和内容过滤。Debug 使用开发签名权限，Release 使用 Developer ID 系统扩展权限；发布包还需公证。未签名构建只能用于编译检查，不能安装系统扩展。扩展目前使用随 App 发布的规则快照，更新列表需发布新版 App。过滤器无法从每条网络连接取得域名，代理流量仍由 mihomo 规则兜底。
+正式发布时需给 App 和 `midogFilter` target 配置同一个 Apple Developer Team、签名，并把签名后的 App 安装到 `/Applications`。首次启动要在系统设置中批准系统扩展和内容过滤。Debug 使用开发签名权限，Release 使用 Developer ID 系统扩展权限；发布包还需公证。未签名构建只能用于编译检查，不能安装系统扩展。扩展目前使用随 App 发布的规则快照，更新列表需发布新版 App。过滤器无法从每条网络连接取得域名，代理流量仍由 midog-core 规则兜底。
 
 仅在已关闭 SIP 的本机开发环境，可运行 `scripts/build-local-filter.sh` 生成临时签名的测试 App；这只验证构建和签名，不保证 NetworkExtension 接受未获授权的权限，也不能用于发布。开启系统扩展开发模式可跳过 App 必须位于「应用程序」目录的检查：`systemextensionsctl developer on`。测试结束后应恢复 SIP。
 
@@ -65,7 +65,7 @@ cd midog
 open midog.xcodeproj
 ```
 
-在 Xcode 中选择 `midog` scheme，`⌘R` 运行即可。mihomo 内核已以 gzip 形式内置在 `midog/Resources/mihomo.gz`，无需额外准备。
+在 Xcode 中选择 `midog` scheme，`⌘R` 运行即可。内核已以 gzip 形式内置在 `midog/Resources/midog-core.gz`，无需额外准备。
 
 ## 快速上手
 
@@ -91,7 +91,7 @@ midog/
 │   ├── DashboardView / NodesView / RulesView
 │   ├── SourcesView / LogsView / SettingsView
 │   └── Components / Theme       # 自绘组件与主题
-└── Resources/mihomo.gz    # 内置 mihomo 内核
+└── Resources/midog-core.gz    # 内置 mihomo 内核
 ```
 
 设计要点：
@@ -106,7 +106,7 @@ midog/
 midog 使用 Clash 配置格式，暂不支持 V2Ray 通用节点链接（`vmess://` 等）订阅。请在机场后台选择 Clash / Clash Meta 订阅链接。
 
 **开启 TUN 后没有生效？**
-提权成功后需要在总览页**重启一次内核**，让内核以新权限重新加载。
+首次启动时授权安装 launchd 服务；如果 TUN 未生效，在总览页重启内核并检查系统日志。
 
 **数据存储在哪里？**
 配置、规则（`rules.txt`）、订阅缓存与释放后的内核统一存放在应用数据目录，可在 **设置 → 数据目录** 中直接打开。

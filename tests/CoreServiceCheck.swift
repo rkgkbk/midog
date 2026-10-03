@@ -7,6 +7,7 @@ enum CoreServiceCheck {
         let data = try PropertyListSerialization.data(
             fromPropertyList: CoreService.job(dataDir: dir), format: .xml, options: 0)
         let plist = try PropertyListSerialization.propertyList(from: data, format: nil) as! [String: Any]
+        assert((CoreService.binary as NSString).lastPathComponent == "midog-core")
         assert(plist["ProgramArguments"] as? [String] == [CoreService.binary, "-d", dir.path])
         assert(plist["WorkingDirectory"] as? String == dir.path)
         assert(plist["KeepAlive"] as? Bool == true)
