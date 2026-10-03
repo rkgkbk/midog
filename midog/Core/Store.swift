@@ -26,15 +26,6 @@ enum DelayState: Equatable {
     }
 }
 
-/// 出口分流自检的单条结果
-struct EgressCheck: Identifiable, Equatable {
-    enum State { case pass, warn, fail }
-    let id = UUID()
-    let title: String
-    let detail: String
-    let state: State
-}
-
 struct Toast: Identifiable, Equatable {
     let id = UUID()
     let text: String
@@ -91,10 +82,6 @@ final class Store: ObservableObject {
     @Published var totalUp = 0
     @Published var totalDown = 0
     @Published var ruleRuntime: [String: RuleProviderRuntime] = [:]
-    /// 网卡快照，供出口分流的探测与在线检查使用（3 秒轮询刷新）
-    @Published var netIfaces: [NetIface] = []
-    @Published var egressChecks: [EgressCheck] = []
-    @Published var egressTesting = false
     /// 本次启动已自动恢复过的内置规则集，避免重载失败时死循环
     private var lastIntegrityRepair: Date?
     @Published var busy = false                 // 进程启停中
@@ -127,30 +114,6 @@ final class Store: ObservableObject {
         data.mode == "global" ? "GLOBAL" : "PROXY"
     }
 
-    // ---- 出口分流 ----
-
-    var egressSplit: EgressSplit? { data.egressSplit }
-    var egressSplitOn: Bool { data.egressSplit != nil }
-
-    /// 探测到的 USB 网络共享网卡（未开启分流时用来预览"开了会绑到哪张卡"）
-    var detectedUSB: NetIface? { NetworkInterfaces.usbTether(in: netIfaces) }
-    var detectedWiFi: NetIface? { NetworkInterfaces.wifi(in: netIfaces) }
-
-    /// 已固定的网卡此刻的 IP；nil = 那张卡已经掉线
-    var splitProxyIP: String? {
-        data.egressSplit.flatMap { split in netIfaces.first { $0.bsdName == split.proxyInterface }?.ipv4 }
-    }
-    var splitDirectIP: String? {
-        data.egressSplit.flatMap { split in netIfaces.first { $0.bsdName == split.directInterface }?.ipv4 }
-    }
-
-    /// 分流开着、但代理绑定的那张网卡已经没了 —— 此时所有代理节点都连不通
-    var egressSplitDegraded: Bool { egressSplitOn && splitProxyIP == nil }
-
-    func refreshNetworkInterfaces() {
-        netIfaces = NetworkInterfaces.snapshot()
-    }
-
     // ============ 初始化 ============
 
     private init() {
@@ -161,7 +124,6 @@ final class Store: ObservableObject {
         privileged = CoreService.installed
         // launchd 重启会重新读取磁盘配置；UI 重开时必须继续使用其中的同一把密钥。
         saveData()
-        netIfaces = NetworkInterfaces.snapshot()
     }
 
     private static func loadData() -> AppData {
@@ -627,234 +589,6 @@ final class Store: ObservableObject {
         } else {
             toast(target ? "TUN 已开启，系统流量已接管" : "TUN 已关闭")
         }
-    }
-
-    // ============ 出口分流 ============
-
-    /// 开关"代理走 USB / 直连走 Wi-Fi"。
-    ///
-    /// 开启时现场探测网卡并把名字固定进 data.json；之后不做任何监听、不自动切换：
-    /// 拔掉手机 = 代理全断，界面会给出警告，由用户手动关闭。这是刻意的——
-    /// 悄悄把本该走 USB 的流量倒回 Wi-Fi，比直接断掉更糟。
-    func toggleEgressSplit() async {
-        if egressSplitOn {
-            data.egressSplit = nil
-            egressChecks = []
-            saveData()
-            let apply = await applyChanges()
-            refreshNetworkInterfaces()
-            if let error = apply.error {
-                toast("出口分流关闭失败: \(error)", error: true)
-                return
-            }
-            appendLog(.system, "出口分流已关闭，出站恢复为内核默认路由")
-            toast("出口分流已关闭\(apply.note)")
-            return
-        }
-
-        refreshNetworkInterfaces()
-
-        guard let usb = detectedUSB else {
-            toast("没有找到 USB 网卡：请用数据线连接 iPhone，并在手机上打开「个人热点 → 允许其他人加入」", error: true)
-            return
-        }
-        guard let usbIP = usb.ipv4 else {
-            toast("\(usb.label) 没有取得 IP：请到 系统设置 → 网络 → \(usb.displayName) → 详细信息，关闭「除非需要，否则停用」", error: true)
-            return
-        }
-        guard let wifi = detectedWiFi else {
-            toast("没有找到 Wi-Fi 网卡，直连出口无处可绑", error: true)
-            return
-        }
-        guard let wifiIP = wifi.ipv4 else {
-            toast("\(wifi.label) 没有取得 IP：请先连上 Wi-Fi 再开启出口分流", error: true)
-            return
-        }
-        guard usb.bsdName != wifi.bsdName else {
-            toast("USB 与 Wi-Fi 被识别为同一张网卡，无法分流", error: true)
-            return
-        }
-
-        let split = EgressSplit(proxyInterface: usb.bsdName,
-                                proxyLabel: usb.label,
-                                directInterface: wifi.bsdName,
-                                directLabel: wifi.label,
-                                enabledAt: isoNow())
-        data.egressSplit = split
-        saveData()
-        let apply = await applyChanges()
-        if let error = apply.error {
-            // 配置没能生效就别留着这份状态，否则界面显示"已开启"而内核其实还是旧配置
-            data.egressSplit = nil
-            saveData()
-            _ = await applyChanges()
-            toast("出口分流开启失败: \(error)", error: true)
-            return
-        }
-        refreshNetworkInterfaces()
-        egressChecks = []
-        appendLog(.system, "出口分流已开启：代理 → \(split.proxyLabel) \(usbIP)，直连 → \(split.directLabel) \(wifiIP)")
-        toast("出口分流已开启：代理走 \(usb.displayName)，直连走 \(wifi.displayName)\(apply.note)")
-    }
-
-    /// 出口自检：确认分流不是"写在配置里"，而是真的在运行中的内核里生效、两条链路都能出网。
-    ///
-    /// 四步——网卡在线 → 内核里的 interface 绑定 → 两条链路各测一次延迟 →
-    /// 测试期间 USB 网卡的发送计数是否真的增长。最后一步是关键证据：
-    /// USB 网卡只有被分流绑定的出站会用，绑定没生效的话它的计数不会动。
-    func testEgressSplit() async {
-        guard let split = data.egressSplit, !egressTesting else { return }
-        egressTesting = true
-        defer { egressTesting = false }
-
-        var checks: [EgressCheck] = []
-        func publish() { egressChecks = checks }
-        checks = []
-        publish()
-
-        // ---- 1. 固定的两张网卡还在不在 ----
-        refreshNetworkInterfaces()
-        let proxyIP = splitProxyIP
-        let directIP = splitDirectIP
-        checks.append(EgressCheck(title: "代理网卡 \(split.proxyInterface)",
-                                  detail: proxyIP.map { "在线 · \($0)" } ?? "已断开，代理无法出网",
-                                  state: proxyIP != nil ? .pass : .fail))
-        checks.append(EgressCheck(title: "直连网卡 \(split.directInterface)",
-                                  detail: directIP.map { "在线 · \($0)" } ?? "已断开，直连无法出网",
-                                  state: directIP != nil ? .pass : .fail))
-        publish()
-
-        guard running, connected else {
-            checks.append(EgressCheck(title: "内核状态",
-                                      detail: running ? "API 不可达，后续检查已跳过" : "内核未运行，后续检查已跳过",
-                                      state: .fail))
-            publish()
-            return
-        }
-
-        // ---- 2. 直连出站在内核里绑到了哪张卡 ----
-        do {
-            let detail = try await client.proxyDetail(DIRECT_WIFI_PROXY)
-            let iface = detail.interface ?? ""
-            let ok = iface == split.directInterface
-            checks.append(EgressCheck(
-                title: "直连出站绑定",
-                detail: ok ? "\(DIRECT_WIFI_PROXY) → \(iface)"
-                           : "\(DIRECT_WIFI_PROXY) 绑到了 \(iface.isEmpty ? "（未绑定）" : iface)，期望 \(split.directInterface)",
-                state: ok ? .pass : .fail))
-        } catch {
-            checks.append(EgressCheck(title: "直连出站绑定",
-                                      detail: "读取失败：\(error.localizedDescription)",
-                                      state: .fail))
-        }
-        publish()
-
-        // ---- 3. 代理节点在内核里绑到了哪张卡 ----
-        let wanted = Set(data.sources.filter { $0.enabled }.map { ConfigGenerator.providerName(for: $0.name) })
-        do {
-            let providers = try await client.providerNodes()
-            var total = 0
-            var bound = 0
-            var strays: [String] = []
-            for (name, nodes) in providers where wanted.contains(name) {
-                for node in nodes {
-                    total += 1
-                    if node.interface == split.proxyInterface {
-                        bound += 1
-                    } else if strays.count < 3 {
-                        strays.append(node.name ?? "?")
-                    }
-                }
-            }
-            if total == 0 {
-                checks.append(EgressCheck(title: "代理节点绑定",
-                                          detail: "运行中的内核里没有找到节点，请确认节点来源已启用",
-                                          state: .fail))
-            } else if bound == total {
-                checks.append(EgressCheck(title: "代理节点绑定",
-                                          detail: "\(total) 个节点全部 → \(split.proxyInterface)",
-                                          state: .pass))
-            } else {
-                checks.append(EgressCheck(
-                    title: "代理节点绑定",
-                    detail: "\(bound)/\(total) 个节点绑到 \(split.proxyInterface)，未绑定：\(strays.joined(separator: "、"))",
-                    state: bound == 0 ? .fail : .warn))
-            }
-        } catch {
-            checks.append(EgressCheck(title: "代理节点绑定",
-                                      detail: "读取失败：\(error.localizedDescription)",
-                                      state: .fail))
-        }
-        publish()
-
-        // ---- 4. 两条链路各跑一次真实请求，同时记网卡发送计数 ----
-        func sent(_ from: [String: UInt32], _ to: [String: UInt32], _ iface: String) -> UInt32 {
-            (to[iface] ?? 0) &- (from[iface] ?? 0)   // 32 位计数器会回绕，用溢出减法
-        }
-
-        let start = NetworkInterfaces.outBytesMap()
-        let directDelay = await measureDelay(DIRECT_WIFI_PROXY)
-        let mid = NetworkInterfaces.outBytesMap()
-        checks.append(EgressCheck(title: "直连链路",
-                                  detail: Self.linkDetail(directDelay, via: split.directLabel),
-                                  state: Self.linkState(directDelay)))
-        publish()
-
-        // 只测具体节点：策略组自身的 delay 接口对 selector 不可用，
-        // 指向 DIRECT / DIRECT-WIFI 时测的也不是 USB 出口，两种情况都直接说明而不是报失败。
-        let terminals: Set<String> = ["DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", DIRECT_WIFI_PROXY]
-        let probe = currentProxyName.flatMap { terminals.contains($0) ? nil : $0 }
-        var usbSent: UInt32 = 0
-
-        if proxyIP == nil {
-            checks.append(EgressCheck(title: "代理链路",
-                                      detail: "\(split.proxyInterface) 已断开，未执行测试",
-                                      state: .fail))
-        } else if let probe {
-            let proxyDelay = await measureDelay(probe)
-            let end = NetworkInterfaces.outBytesMap()
-            usbSent = sent(mid, end, split.proxyInterface)
-            checks.append(EgressCheck(title: "代理链路",
-                                      detail: "\(probe)：" + Self.linkDetail(proxyDelay, via: split.proxyLabel),
-                                      state: Self.linkState(proxyDelay)))
-        } else {
-            checks.append(EgressCheck(
-                title: "代理链路",
-                detail: "当前策略是 \(routePath.last ?? "—")，没有指向具体代理节点，未执行测试",
-                state: .warn))
-        }
-        publish()
-
-        let wifiSent = sent(start, mid, split.directInterface)
-        if proxyIP != nil, probe != nil {
-            checks.append(EgressCheck(
-                title: "出口流量计数",
-                detail: "代理测试期间 \(split.proxyInterface) 发出 \(usbSent) 字节；"
-                      + "直连测试期间 \(split.directInterface) 发出 \(wifiSent) 字节",
-                state: usbSent > 0 ? .pass : .warn))
-        }
-        publish()
-
-        let failed = checks.filter { $0.state == .fail }.count
-        if failed == 0 {
-            toast("出口自检通过：代理走 \(split.proxyInterface)，直连走 \(split.directInterface)")
-        } else {
-            toast("出口自检发现 \(failed) 项异常，详见「设置 → 出口分流」", error: true)
-        }
-    }
-
-    private static func linkDetail(_ state: DelayState, via label: String) -> String {
-        switch state {
-        case .ms(let v): return "\(v) ms · 经 \(label)"
-        case .timeout: return "超时 · \(label) 可能已不可用"
-        case .failed(let reason): return "失败 · \(reason)"
-        case .testing: return "测试中"
-        }
-    }
-
-    private static func linkState(_ state: DelayState) -> EgressCheck.State {
-        if case .ms = state { return .pass }
-        return .fail
     }
 
     nonisolated static func plainObject(_ dict: [String: JSONValue]) -> [String: Any] {
@@ -1654,8 +1388,21 @@ final class Store: ObservableObject {
     func runLoops() async {
         await bootstrapKernel()
         Task { await refreshStaleConvertedProviders() }
+        var checkedLegacyRouting = false
         while !Task.isCancelled {
             await pollTick()
+            if !checkedLegacyRouting {
+                checkedLegacyRouting = true
+                // 旧版已开启 USB 分流时，清掉正在运行的内核里的网卡绑定。
+                if running,
+                   let config = try? String(contentsOf: AppPaths.outputConfig, encoding: .utf8),
+                   config.contains("DIRECT-WIFI") {
+                    let result = await applyChanges()
+                    if let error = result.error {
+                        toast("移除旧出口分流配置失败：\(error)", error: true)
+                    }
+                }
+            }
             try? await Task.sleep(nanoseconds: 3_000_000_000)
         }
     }
@@ -1680,7 +1427,6 @@ final class Store: ObservableObject {
         running = servicePID != nil
         privileged = CoreService.installed
         tunActive = await Self.tunInterfaceActive()
-        refreshNetworkInterfaces()
         await refreshProxies()
         if connected {
             await enforceLockedMode()

@@ -156,27 +156,6 @@ let LOCKED_MODE = "rule"
 
 let HEALTH_CHECK_URL = "http://www.gstatic.com/generate_204"
 
-/// 出口分流开启时生成的直连出站名：显式绑定 Wi-Fi 网卡，
-/// 不再依赖 tun.auto-detect-interface 猜默认网卡。
-let DIRECT_WIFI_PROXY = "DIRECT-WIFI"
-
-/// 出口分流：代理节点固定从 USB 网卡拨号，直连固定从 Wi-Fi 网卡出去。
-///
-/// 网卡名（en5）会随拔插变化，所以这里记下开启当时探测到的名字并固定下来，
-/// 之后**不再自动跟随**：拔掉手机就是所有代理节点 dial 失败，
-/// 由用户看到提示后手动关闭——绝不在用户不知情时把代理流量偷偷换到 Wi-Fi 上。
-struct EgressSplit: Codable, Equatable {
-    var proxyInterface: String      // 代理节点绑定的网卡，如 en5
-    var proxyLabel: String          // 展示用，如 "iPhone USB (en5)"
-    var directInterface: String     // 直连绑定的网卡，如 en0
-    var directLabel: String         // 展示用，如 "Wi-Fi (en0)"
-    var enabledAt: String
-
-    var isValid: Bool {
-        !proxyInterface.isEmpty && !directInterface.isEmpty && proxyInterface != directInterface
-    }
-}
-
 /// 生成 external-controller 的默认认证密钥。
 /// secret 留空时 mihomo 的 REST API 不做任何认证，本机任何进程（包括网页里的 fetch）
 /// 都能直接打 127.0.0.1:9090，比如 PATCH /configs 把出站模式改成 global 绕过锁定；
@@ -304,8 +283,6 @@ struct AppData: Codable {
     var sources: [Source] = []
     var ruleProviders: [RuleProvider] = []
     var finalTarget: String = "PROXY"
-    /// nil = 出口分流关闭（全部出站交给内核按默认路由处理）
-    var egressSplit: EgressSplit?
 
     init() {
         settings["secret"] = .string(generateControllerSecret())
@@ -336,9 +313,6 @@ struct AppData: Codable {
             .filter { !$0.name.isEmpty && !$0.url.isEmpty }
         let ft = (try? c.decode(String.self, forKey: .finalTarget)) ?? "PROXY"
         finalTarget = FINAL_TARGETS.contains(ft) ? ft : "PROXY"
-        // 手改 data.json 写进来的残缺配置会让内核直接加载失败，这里挡掉
-        let split = (try? c.decodeIfPresent(EgressSplit.self, forKey: .egressSplit)) ?? nil
-        egressSplit = (split?.isValid ?? false) ? split : nil
     }
 
     // ---- 常用访问 ----

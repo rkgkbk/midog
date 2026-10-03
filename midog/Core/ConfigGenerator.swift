@@ -69,16 +69,9 @@ enum ConfigGenerator {
             return .failure(.invalid("没有已启用且文件存在的节点来源，请在「节点来源」中至少启用一个"))
         }
 
-        // 出口分流：代理节点绑 USB 网卡，直连绑 Wi-Fi 网卡。nil = 关闭，全部交给内核默认路由。
-        let split = data.egressSplit
-
         var lines: [String] = []
         lines.append("# 本文件由 midog (macOS) 自动生成，请勿手工编辑（修改会在下次生成时丢失）")
         lines.append("# 生成时间: \(isoNow())")
-        if let split {
-            lines.append("# 出口分流已开启：代理 → \(split.proxyLabel)，直连 → \(split.directLabel)")
-            lines.append("# 网卡名已固定，拔掉 USB 后代理会全部失败且不会自动回落，需在 App 里手动关闭")
-        }
         lines.append("")
 
         // ---- 基础设置 ----
@@ -108,32 +101,12 @@ enum ConfigGenerator {
         lines.append("")
 
         // ---- proxy-providers：每个启用的来源一个 file provider ----
-        // 分流开启时，凡是指向内置 DIRECT 的"生成出来的"目标都换成绑了 Wi-Fi 的 DIRECT-WIFI。
-        // rules.txt 里用户手写的 DIRECT 一律不动：那里有 127.0.0.0/8 之类的回环/私网规则，
-        // 把它们绑到物理网卡上会直接断掉本机通信。
-        let directTarget: (String) -> String = { target in
-            split != nil && target == "DIRECT" ? DIRECT_WIFI_PROXY : target
-        }
-
-        // ---- proxies：出口分流用的直连出站 ----
-        if let split {
-            let directWifi: JSONValue = .object([
-                "name": .string(DIRECT_WIFI_PROXY),
-                "type": .string("direct"),
-                "interface-name": .string(split.directInterface),
-                "udp": .bool(true)
-            ])
-            lines.append("proxies:")
-            lines.append("  - \(directWifi.jsonString)")
-            lines.append("")
-        }
-
         var providerNames: [String] = []
         lines.append("proxy-providers:")
         for src in enabledSources {
             let pname = providerName(for: src.name)
             providerNames.append(pname)
-            var fields: [String: JSONValue] = [
+            let fields: [String: JSONValue] = [
                 "type": .string("file"),
                 "path": .string(configsDir.appendingPathComponent(src.name).path),
                 "health-check": .object([
@@ -143,10 +116,6 @@ enum ConfigGenerator {
                     "lazy": .bool(true)
                 ])
             ]
-            if let split {
-                // override 会套到 provider 里的每一个节点上，订阅更新后也不用逐个改
-                fields["override"] = .object(["interface-name": .string(split.proxyInterface)])
-            }
             lines.append("  \(JSONValue.escape(pname)): \(JSONValue.object(fields).jsonString)")
         }
         lines.append("")
@@ -162,7 +131,7 @@ enum ConfigGenerator {
         let proxyGroup: JSONValue = .object([
             "name": .string("PROXY"),
             "type": .string("select"),
-            "proxies": .array([.string("AUTO"), .string(directTarget("DIRECT"))]),
+            "proxies": .array([.string("AUTO"), .string("DIRECT")]),
             "include-all-providers": .bool(true)
         ])
         let autoGroup: JSONValue = .object([
@@ -224,7 +193,7 @@ enum ConfigGenerator {
         let finalTarget = FINAL_TARGETS.contains(data.finalTarget) ? data.finalTarget : "PROXY"
         // 内置强制规则排在最前，用户规则无法在它之前插队放行
         var userRules: [String] = MANDATORY_RULE_PROVIDERS.map {
-            "RULE-SET,\($0.provider.name),\(directTarget(normalizedRuleTarget($0.provider.target) ?? "REJECT"))"
+            "RULE-SET,\($0.provider.name),\(normalizedRuleTarget($0.provider.target) ?? "REJECT")"
         }
         for rule in rules {
             let trimmed = rule.trimmingCharacters(in: .whitespaces)
@@ -243,7 +212,7 @@ enum ConfigGenerator {
                 if rp.targetKind == "node", normalizedRuleTarget(rp.target) != nil {
                     target = ruleNodeGroupName(for: rp.name)
                 } else {
-                    target = directTarget(normalizedRuleTarget(rp.target) ?? "PROXY")
+                    target = normalizedRuleTarget(rp.target) ?? "PROXY"
                 }
                 userRules.append("RULE-SET,\(rp.name),\(target)")
             }
@@ -252,7 +221,7 @@ enum ConfigGenerator {
         for rule in userRules {
             lines.append("  - \(JSONValue.escape(rule))")
         }
-        lines.append("  - \(JSONValue.escape("MATCH,\(directTarget(finalTarget))"))")
+        lines.append("  - \(JSONValue.escape("MATCH,\(finalTarget)"))")
         lines.append("")
 
         return .success(Output(yaml: lines.joined(separator: "\n"), providers: providerNames))

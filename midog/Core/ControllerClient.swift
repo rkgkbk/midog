@@ -17,14 +17,6 @@ struct ProxyNode: Decodable {
     }
 }
 
-/// /proxies/{name} 与 /providers/proxies 里单个出站的运行时信息。
-/// interface 就是内核实际会 bind 的网卡名，出口分流是否生效以它为准。
-struct ProxyDetail: Decodable {
-    var name: String?
-    var type: String?
-    var interface: String?
-}
-
 struct RuleProviderRuntime: Decodable {
     var ruleCount: Int?
     var updatedAt: String?
@@ -138,24 +130,6 @@ struct ControllerClient {
         let result = try await send("GET", path, timeout: 40)
         try expectOK(result)
         return try JSONDecoder().decode([String: Int].self, from: result.1)
-    }
-
-    /// 顶层出站的运行时详情（provider 内的节点不在这里，会 404）
-    func proxyDetail(_ name: String) async throws -> ProxyDetail {
-        let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
-        let result = try await send("GET", "/proxies/\(encoded)")
-        try expectOK(result)
-        return try JSONDecoder().decode(ProxyDetail.self, from: result.1)
-    }
-
-    /// 每个 proxy-provider 里的节点详情：provider 名 → 节点列表
-    func providerNodes() async throws -> [String: [ProxyDetail]] {
-        let result = try await send("GET", "/providers/proxies", timeout: 15)
-        try expectOK(result)
-        struct Entry: Decodable { var proxies: [ProxyDetail]? }
-        struct Wrapper: Decodable { var providers: [String: Entry] }
-        let wrapper = try JSONDecoder().decode(Wrapper.self, from: result.1)
-        return wrapper.providers.mapValues { $0.proxies ?? [] }
     }
 
     // ---- 配置 ----
