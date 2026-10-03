@@ -240,4 +240,9 @@ struct ControllerClient {
         let req = try makeRequest("GET", "/traffic", timeout: 3600)
         return try await URLSession.shared.bytes(for: req)
     }
+
+    func logStream() async throws -> (URLSession.AsyncBytes, URLResponse) {
+        let req = try makeRequest("GET", "/logs?level=info", timeout: 3600)
+        return try await URLSession.shared.bytes(for: req)
+    }
 }

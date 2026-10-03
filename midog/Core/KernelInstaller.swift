@@ -1,11 +1,10 @@
 import CryptoKit
 import Foundation
 
-/// 内置 mihomo 内核的释放与提权。
+/// 内置 mihomo 内核的释放。root 权限由 launchd 系统服务提供。
 ///
 /// 内核以 gzip 压缩后打进 app 包，首次运行（以及内置版本升级后）解压到
-/// AppPaths.root/bin/mihomo。开启 TUN 需要 root 创建虚拟网卡，
-/// 所以释放出来的副本还要 chown root + setuid。
+/// AppPaths.root/bin/mihomo，随后安装到 root 管理的服务路径。
 enum KernelInstaller {
     enum InstallError: LocalizedError {
         case missingBundledKernel
@@ -22,16 +21,16 @@ enum KernelInstaller {
     }
 
     /// app 包内置的内核（gzip）
-    static var bundled: URL? { Bundle.main.url(forResource: "mihomo", withExtension: "gz") }
+    nonisolated static var bundled: URL? { Bundle.main.url(forResource: "mihomo", withExtension: "gz") }
 
     /// 解压后的内核位置
-    static var installed: URL { AppPaths.root.appendingPathComponent("bin/mihomo", isDirectory: false) }
+    nonisolated static var installed: URL { AppPaths.root.appendingPathComponent("bin/mihomo", isDirectory: false) }
 
     /// 记录已释放内核对应的压缩包哈希，避免每次启动都解压 43MB
-    private static var marker: URL { installed.deletingLastPathComponent().appendingPathComponent(".kernel-sha256") }
+    private nonisolated static var marker: URL { installed.deletingLastPathComponent().appendingPathComponent(".kernel-sha256") }
 
     /// 把内置内核解压到 Application Support，返回可执行文件路径。
-    /// 提权产生的 setuid 位属于文件本身，重新释放会丢失，因此版本没变时不重写。
+    /// 旧版本的 setuid 副本必须替换成普通用户文件，避免可写目录中的特权程序长期存在。
     @discardableResult
     nonisolated static func installIfNeeded() throws -> URL {
         guard let bundled else { throw InstallError.missingBundledKernel }
@@ -40,6 +39,7 @@ enum KernelInstaller {
         let expected = try digest(of: bundled)
 
         if fm.isExecutableFile(atPath: target.path),
+           !isPrivileged(target.path),
            let recorded = try? String(contentsOf: marker, encoding: .utf8),
            recorded == expected {
             return target
@@ -60,19 +60,12 @@ enum KernelInstaller {
         return target
     }
 
-    /// 内核是否已具备开启 TUN 所需的 root 权限
-    nonisolated static func isPrivileged(_ path: String) -> Bool {
+    private nonisolated static func isPrivileged(_ path: String) -> Bool {
         guard !path.isEmpty,
               let attrs = try? FileManager.default.attributesOfItem(atPath: path) else { return false }
         let owner = (attrs[.ownerAccountID] as? NSNumber)?.intValue ?? -1
         let perms = (attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0
         return owner == 0 && (perms & 0o4000) != 0
-    }
-
-    /// 等价于 `sudo chown root:admin <path> && sudo chmod u+s <path>`。阻塞，勿在主线程调用。
-    nonisolated static func elevate(path: String) throws {
-        let target = Privileged.quoted(path)
-        try Privileged.run("/usr/sbin/chown root:admin \(target) && /bin/chmod u+s \(target)")
     }
 
     /// 交给 gunzip 解压：它自带 CRC 校验，且不必把 43MB 全读进内存

@@ -35,7 +35,7 @@
 | **节点来源** | 多订阅共存，每个来源作为独立 proxy-provider 注入内核；订阅更新只刷新对应 provider，**不打断现有连接**；支持导入本地 Clash YAML |
 | **分流规则** | 手写规则逐行编辑（支持注释），支持远程规则集（GitHub / CDN）和本地规则集导入，base64、gfwlist 等格式自动转换 |
 | **日志** | 内核日志实时流式展示，按级别高亮 |
-| **设置** | 内核 JSON 配置（端口 / DNS / hosts 等）保存后**热重载不重启**；随应用自动启动内核；一键 TUN 提权 |
+| **设置** | 内核 JSON 配置（端口 / DNS / hosts 等）保存后**热重载不重启**；launchd 自动重启内核；TUN 由系统服务提供权限 |
 | **菜单栏** | 常驻状态栏图标，关窗不退出，随时唤起主窗口 |
 
 ### 系统内容过滤
@@ -55,7 +55,7 @@ macOS 版同时把内置 `category-porn.list` 打进内容过滤系统扩展。�
 
 ### 下载安装
 
-从 [Releases](../../releases) 页面下载最新的 `midog.app`，拖入「应用程序」文件夹即可。
+从 [Releases](../../releases) 页面下载最新的 `midog.app`，拖入「应用程序」文件夹即可。首次启动内核时会请求管理员授权，安装 root 管理的 launchd 服务。
 
 ### 从源码构建
 
@@ -73,15 +73,15 @@ open midog.xcodeproj
 2. 回到 **总览**，点击启动内核，打开代理开关
 3. 在 **节点** 页测速并选择合适的节点，完成 ✅
 
-> **TUN 模式**：如需接管全部系统流量，在 **设置** 中点击提权（需输入一次登录密码，用于为内核授予创建虚拟网卡的权限），然后重启内核。
+> **TUN 模式**：内核通过 launchd 系统服务以 root 运行，无需再设置 setuid。停止内核会注销服务；再次启动需要管理员授权。
 
 ## 技术架构
 
 ```
 midog/
 ├── Core/                  # 无 UI 的核心逻辑
-│   ├── CoreProcess.swift        # mihomo 内核进程管理
-│   ├── KernelInstaller.swift    # 内置内核释放与 TUN 提权
+│   ├── CoreService.swift        # launchd 内核服务
+│   ├── KernelInstaller.swift    # 内置内核释放
 │   ├── ControllerClient.swift   # mihomo RESTful API 客户端（节点/测速/连接）
 │   ├── ConfigGenerator.swift    # 生成内核运行配置
 │   ├── SubscriptionParser.swift # 订阅下载与 Clash YAML 校验
@@ -96,7 +96,7 @@ midog/
 
 设计要点：
 
-- **内核即进程**：mihomo 作为子进程运行，通过其 RESTful API 通信，App 崩溃不影响内核逻辑边界清晰
+- **内核由 launchd 管理**：服务使用 `-d` 指向应用数据目录，异常退出自动重启；midog 通过 REST API 通信，退出 App 不结束内核
 - **热更新优先**：订阅刷新走 provider 级更新、内核配置改动走热重载，尽量不打断已有连接
 - **状态持久化**：节点选择、fake-ip 缓存等由内核 profile 持久化，重启后保持上次状态
 

@@ -2,6 +2,14 @@ import Foundation
 import AppKit
 import Combine
 
+struct LogEntry: Identifiable, Equatable {
+    enum Level: String { case info, error, system }
+    let id = UUID()
+    let date: Date
+    let level: Level
+    let message: String
+}
+
 enum DelayState: Equatable {
     case testing
     case ms(Int)
@@ -60,9 +68,6 @@ final class Store: ObservableObject {
     // ---- 持久数据 ----
     @Published var data: AppData
     @Published var rulesText: String
-    @Published var autoStart: Bool {
-        didSet { UserDefaults.standard.set(autoStart, forKey: "autoStartCore") }
-    }
 
     // ---- 运行状态 ----
     @Published var running = false
@@ -100,9 +105,8 @@ final class Store: ObservableObject {
     // ---- UI ----
     @Published var toasts: [Toast] = []
 
-    private let core = CoreProcess()
     private var trafficTask: Task<Void, Never>?
-    private var stopRequested = false           // 区分用户主动停止与异常退出
+    private var logTask: Task<Void, Never>?
     private let maxLogs = 500
     private let currentRouteDelayRefreshInterval: TimeInterval = 300
     private var lastAutoDelayTestAt: [String: Date] = [:]
@@ -153,45 +157,11 @@ final class Store: ObservableObject {
         AppPaths.ensure()
         data = Self.loadData()
         rulesText = Self.loadRulesText()
-        autoStart = UserDefaults.standard.bool(forKey: "autoStartCore")
         data.syncLocalFiles(configsDir: AppPaths.configsDir)
-        privileged = KernelInstaller.isPrivileged(KernelInstaller.installed.path)
-        // 每次启动轮换 external-controller 密钥：拿到过旧密钥的人不能长期直连 API 改内核配置
-        data.settings["secret"] = .string(generateControllerSecret())
+        privileged = CoreService.installed
+        // launchd 重启会重新读取磁盘配置；UI 重开时必须继续使用其中的同一把密钥。
         saveData()
         netIfaces = NetworkInterfaces.snapshot()
-
-        core.onLog = { [weak self] level, message in
-            self?.appendLog(level, message)
-        }
-        core.onExit = { [weak self] code in
-            guard let self else { return }
-            let uptime = self.startedAt.map { Date().timeIntervalSince($0) } ?? 0
-            self.running = false
-            self.pid = nil
-            self.startedAt = nil
-            self.connected = false
-            self.stopTrafficStream()
-
-            if self.stopRequested {
-                self.stopRequested = false
-                return
-            }
-            // 非用户主动停止：把退出原因显式暴露出来，而不是让 UI 静默弹回
-            let errLines = self.logs.suffix(30)
-                .filter { $0.level == .error }
-                .suffix(3)
-                .map { $0.message }
-                .joined(separator: "\n")
-            if uptime < 15 {
-                self.startupError = "内核启动后异常退出 (code \(code))"
-                    + (errLines.isEmpty ? "" : "：\n\(errLines)")
-            } else {
-                // 运行过一段时间后被外部杀掉（活动监视器 / kill）：立刻拉起，拦截不留空窗
-                self.appendLog(.system, "内核意外退出 (code \(code))，自动重启")
-                Task { await self.startCore() }
-            }
-        }
     }
 
     private static func loadData() -> AppData {
@@ -274,7 +244,7 @@ final class Store: ObservableObject {
     func bootstrapKernel() async {
         do {
             _ = try await Task.detached { try KernelInstaller.installIfNeeded() }.value
-            privileged = KernelInstaller.isPrivileged(kernelPath)
+            privileged = CoreService.installed
         } catch {
             appendLog(.system, "内置内核释放失败：\(error.localizedDescription)")
             toast(error.localizedDescription, error: true)
@@ -312,7 +282,7 @@ final class Store: ObservableObject {
                 break   // 已经退出了，当作成功
             case EPERM:
                 do {
-                    try await Task.detached { try Privileged.run("/bin/kill -TERM \(pid)") }.value
+                    _ = try await Task.detached { try Privileged.run("/bin/kill -TERM \(pid)") }.value
                 } catch {
                     toast(error.localizedDescription, error: true)
                     return
@@ -349,28 +319,16 @@ final class Store: ObservableObject {
         return false
     }
 
-    /// 给内核提权（弹系统授权框），成功后即可开关 TUN
-    func elevateKernel() async {
-        busy = true
-        defer { busy = false }
-        let path = kernelPath
-        do {
-            try await Task.detached { try KernelInstaller.elevate(path: path) }.value
-            privileged = KernelInstaller.isPrivileged(path)
-            if privileged {
-                appendLog(.system, "内核已提权 (root + setuid)")
-                toast(running ? "内核已提权，重启内核后可开启 TUN" : "内核已提权，可开启 TUN")
-            } else {
-                toast("提权未生效，请重试", error: true)
-            }
-        } catch {
-            toast(error.localizedDescription, error: true)
-        }
-    }
-
     // ============ 进程控制 ============
 
     func startCore() async {
+        if let servicePID = CoreService.pid() {
+            pid = servicePID
+            running = true
+            privileged = true
+            toast("内核已在运行中")
+            return
+        }
         guard !running else {
             toast("内核已在运行中", error: true)
             return
@@ -400,16 +358,24 @@ final class Store: ObservableObject {
         }
 
         do {
-            let newPid = try core.start(binaryPath: kernelPath, dataDir: AppPaths.dataDir)
-            running = true
-            pid = newPid
-            startedAt = Date()
+            let source = kernelPath
+            try await Task.detached {
+                try CoreService.installAndStart(source: source, dataDir: AppPaths.dataDir)
+            }.value
+            pid = await CoreService.waitForPID()
+            running = pid != nil
+            startedAt = running ? Date() : nil
+            privileged = true
             startupError = nil
             conflictPorts = []
             portHolders = []
-            stopRequested = false
-            appendLog(.system, "内核已启动, PID: \(newPid)")
-            toast("内核已启动")
+            appendLog(.system, "已注册 launchd 内核服务" + (pid.map { ", PID: \($0)" } ?? ""))
+            if running {
+                toast("内核服务已启动")
+            } else {
+                startupError = "launchd 已注册服务，但 mihomo 未启动。请检查 config.yaml 和 launchctl 服务状态。"
+                toast(startupError ?? "内核启动失败", error: true)
+            }
             // 转换型规则集若超期，启动后顺手刷新
             Task { await refreshStaleConvertedProviders() }
             // 内置强制规则集的条数校验不能只等用户翻到规则页，启动后主动跑一次
@@ -421,9 +387,9 @@ final class Store: ObservableObject {
 
     // ============ 冷静期 ============
 
-    /// 停止内核 / 关 TUN / 退出 App 都会让拦截失效，不允许一键完成：
+    /// 停止内核 / 关 TUN 会让拦截失效，不允许一键完成：
     /// 第一次点击开始 15 分钟冷静期，期满后 5 分钟内再点一次才真正执行。
-    /// ponytail: 只存在内存里、只拦 App 内操作；kill -9 / 删 App 挡不住，需要 root 守护进程。
+    /// ponytail: 只存在内存里、只拦 App 内操作；管理员仍可直接停用 launchd 服务。
     static let cooldown: TimeInterval = 15 * 60
     static let unlockWindow: TimeInterval = 5 * 60
     private var unlockAt: Date?
@@ -453,13 +419,19 @@ final class Store: ObservableObject {
         guard passCooldown("停止内核") else { return }
         busy = true
         defer { busy = false }
-        stopRequested = true
-        await core.stop()
+        do {
+            try await Task.detached { try CoreService.stop() }.value
+        } catch {
+            toast(error.localizedDescription, error: true)
+            return
+        }
         running = false
         pid = nil
         startedAt = nil
+        privileged = false
         connected = false
         stopTrafficStream()
+        stopLogStream()
         proxies = [:]
         connCount = 0
         upRate = 0
@@ -467,21 +439,29 @@ final class Store: ObservableObject {
         toast("内核已停止")
     }
 
-    /// 重启：真正等待旧进程退出，而不是旧版的固定 sleep
+    /// 重新安装内置版本和相同参数，然后由 launchd 启动。
     func restartCore() async {
         busy = true
-        stopRequested = true
-        await core.stop()
-        running = false
-        connected = false
-        stopTrafficStream()
-        busy = false
-        await startCore()
-    }
-
-    func shutdownForQuit() {
-        stopRequested = true
-        core.terminateNow()
+        defer { busy = false }
+        if let error = generateConfig() {
+            toast(error, error: true)
+            return
+        }
+        do {
+            let source = kernelPath
+            try await Task.detached {
+                try CoreService.installAndStart(source: source, dataDir: AppPaths.dataDir)
+            }.value
+            pid = await CoreService.waitForPID()
+            running = pid != nil
+            startedAt = running ? Date() : nil
+            connected = false
+            stopTrafficStream()
+            stopLogStream()
+            toast(running ? "内核已重启" : "launchd 重启后未发现 mihomo 进程", error: !running)
+        } catch {
+            toast(error.localizedDescription, error: true)
+        }
     }
 
     // ============ 端口预检 ============
@@ -1552,9 +1532,13 @@ final class Store: ObservableObject {
                 connected = true
                 if let v = try? await client.version() { coreVersion = v }
                 startTrafficStream()
+                startLogStream()
             }
+            if trafficTask == nil { startTrafficStream() }
+            if logTask == nil { startLogStream() }
         } catch {
             connected = false
+            stopLogStream()
         }
     }
 
@@ -1669,9 +1653,6 @@ final class Store: ObservableObject {
 
     func runLoops() async {
         await bootstrapKernel()
-        if autoStart && !running && data.sources.contains(where: { $0.enabled }) {
-            await startCore()
-        }
         Task { await refreshStaleConvertedProviders() }
         while !Task.isCancelled {
             await pollTick()
@@ -1680,9 +1661,24 @@ final class Store: ObservableObject {
     }
 
     private func pollTick() async {
-        running = core.isRunning
-        pid = core.pid
-        privileged = KernelInstaller.isPrivileged(kernelPath)
+        let servicePID = CoreService.pid()
+        if servicePID != pid {
+            if let servicePID {
+                appendLog(.system, "launchd 内核运行中, PID: \(servicePID)")
+                startedAt = Date()
+                startupError = nil
+                Task { await verifyMandatoryAfterStart() }
+            } else if pid != nil {
+                appendLog(.system, "内核进程已退出，等待 launchd 重新启动")
+                startedAt = nil
+                connected = false
+                stopTrafficStream()
+                stopLogStream()
+            }
+        }
+        pid = servicePID
+        running = servicePID != nil
+        privileged = CoreService.installed
         tunActive = await Self.tunInterfaceActive()
         refreshNetworkInterfaces()
         await refreshProxies()
@@ -1780,6 +1776,29 @@ final class Store: ObservableObject {
         downRate = 0
         upHistory = []
         downHistory = []
+    }
+
+    private func startLogStream() {
+        guard logTask == nil else { return }
+        let client = self.client
+        logTask = Task { [weak self] in
+            do {
+                let (bytes, _) = try await client.logStream()
+                for try await line in bytes.lines {
+                    guard !Task.isCancelled else { break }
+                    guard let data = line.data(using: .utf8),
+                          let object = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+                          let message = object["payload"] else { continue }
+                    self?.appendLog(object["type"] == "error" ? .error : .info, message)
+                }
+            } catch { /* 下次轮询重连 */ }
+            self?.logTask = nil
+        }
+    }
+
+    private func stopLogStream() {
+        logTask?.cancel()
+        logTask = nil
     }
 
     // ============ UI 工具 ============

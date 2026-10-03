@@ -48,22 +48,9 @@ struct SettingsView: View {
 
             Rectangle().fill(T.line.opacity(0.6)).frame(height: 1)
 
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("随应用启动内核")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(T.fg)
-                    Text("打开 App 时自动启动内核（存在已启用的节点来源时）")
-                        .font(.system(size: 11))
-                        .foregroundStyle(T.muted)
-                }
-                Spacer()
-                Toggle("", isOn: $store.autoStart)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .tint(T.accent)
-                    .labelsHidden()
-            }
+            Text("首次启动需管理员授权注册 launchd 服务；之后系统会按相同参数自动重启内核，退出 midog 不会停止服务。")
+                .font(.system(size: 11))
+                .foregroundStyle(T.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
@@ -98,24 +85,11 @@ struct SettingsView: View {
             HStack(spacing: 8) {
                 StatusDot(on: store.privileged, onColor: T.ok)
                 Text(store.privileged
-                     ? "内核已提权 (root + setuid)，可随时开关 TUN"
-                     : "内核未提权：开启 TUN（接管系统流量）需要 root 权限创建虚拟网卡，仅需设置一次")
+                     ? "launchd 系统服务以 root 运行，可开关 TUN"
+                     : "启动内核时授权安装 launchd 系统服务，即可使用 TUN")
                     .font(.system(size: 12.5))
                     .foregroundStyle(store.privileged ? T.fg : T.warn)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-            if !store.privileged {
-                HStack(spacing: 10) {
-                    Text("点击提权后在系统弹出的对话框中输入登录密码；完成后回到顶部「重启」内核一次。")
-                        .font(.system(size: 11))
-                        .foregroundStyle(T.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                    MiniButton(title: store.busy ? "提权中…" : "提权") {
-                        Task { await store.elevateKernel() }
-                    }
-                    .disabled(store.busy)
-                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

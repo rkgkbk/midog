@@ -49,24 +49,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // 关机 / 重启 / 注销不拦；其余退出（菜单、⌘Q）走冷静期
-        let reason = NSAppleEventManager.shared().currentAppleEvent?
-            .attributeDescriptor(forKeyword: kAEQuitReason)?.enumCodeValue
-        if let reason, [kAEShutDown, kAERestart, kAEReallyLogOut, kAELogOut].map({ OSType($0) }).contains(reason) {
-            return .terminateNow
-        }
-        let pass = MainActor.assumeIsolated {
-            !Store.shared.running || Store.shared.passCooldown("退出 App")
-        }
-        if !pass { isQuitting = false }
-        return pass ? .terminateNow : .terminateCancel
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        // 退出时随手带走 mihomo 子进程（TUN 网卡/路由由内核自身清理）
-        MainActor.assumeIsolated {
-            Store.shared.shutdownForQuit()
-        }
+        // 退出 UI 不再结束 launchd 服务。
+        return .terminateNow
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
