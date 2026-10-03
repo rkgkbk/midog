@@ -84,6 +84,7 @@ final class Store: ObservableObject {
     @Published var ruleRuntime: [String: RuleProviderRuntime] = [:]
     /// 本次启动已自动恢复过的内置规则集，避免重载失败时死循环
     private var lastIntegrityRepair: Date?
+    private var lastLegacyRoutingRepair: Date?
     @Published var busy = false                 // 进程启停中
     @Published var startupError: String?        // 启动失败/异常退出的常驻错误横幅
     @Published var conflictPorts: [Int] = []    // 上次启动失败时被占用的端口
@@ -1388,19 +1389,15 @@ final class Store: ObservableObject {
     func runLoops() async {
         await bootstrapKernel()
         Task { await refreshStaleConvertedProviders() }
-        var checkedLegacyRouting = false
         while !Task.isCancelled {
             await pollTick()
-            if !checkedLegacyRouting {
-                checkedLegacyRouting = true
-                // 旧版已开启 USB 分流时，清掉正在运行的内核里的网卡绑定。
-                if running,
-                   let config = try? String(contentsOf: AppPaths.outputConfig, encoding: .utf8),
-                   config.contains("DIRECT-WIFI") {
-                    let result = await applyChanges()
-                    if let error = result.error {
-                        toast("移除旧出口分流配置失败：\(error)", error: true)
-                    }
+            // 旧版的绑定可能已在内核运行、磁盘配置却已更新；以实际出站为准。
+            if connected, proxies["DIRECT-WIFI"]?.type?.lowercased() == "direct",
+               lastLegacyRoutingRepair.map({ Date().timeIntervalSince($0) >= 30 }) ?? true {
+                lastLegacyRoutingRepair = Date()
+                let result = await applyChanges()
+                if let error = result.error {
+                    toast("移除旧出口分流配置失败：\(error)", error: true)
                 }
             }
             try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -1408,7 +1405,7 @@ final class Store: ObservableObject {
     }
 
     private func pollTick() async {
-        let servicePID = CoreService.pid()
+        let servicePID = await Task.detached { CoreService.pid() }.value
         if servicePID != pid {
             if let servicePID {
                 appendLog(.system, "launchd 内核运行中, PID: \(servicePID)")

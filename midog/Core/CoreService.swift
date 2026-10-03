@@ -66,6 +66,9 @@ nonisolated enum CoreService {
     }
 
     static func stop() throws {
-        try Privileged.run("/bin/launchctl bootout system/\(label) >/dev/null 2>&1; /bin/rm -f \(Privileged.quoted(plist))")
+        let command = "if /bin/launchctl print system/\(label) >/dev/null 2>&1; then "
+            + "/bin/launchctl bootout system/\(label) || exit; fi; "
+            + "/bin/rm -f \(Privileged.quoted(plist))"
+        try Privileged.run(command)
     }
 }
