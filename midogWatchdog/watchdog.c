@@ -10,18 +10,17 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#define MAX_RULES 256
-#define RULES_FILE "/Library/Application Support/midog-watchdog/proxies.list"
+#include <CoreFoundation/CoreFoundation.h>
+#include "proxy_catalog.h"
+
 #define INTERVAL 3
-
-static char rules[MAX_RULES][PROC_PIDPATHINFO_MAXSIZE];
-static size_t rule_count;
+#define BUNDLE_CACHE_SIZE 256
 static volatile sig_atomic_t stopping;
-
 static void stop(int sig) { (void)sig; stopping = 1; }
 
 static bool protected_path(const char *path) {
-    const char *prefixes[] = {"/System/", "/usr/", "/bin/", "/sbin/", "/Library/Apple/"};
+    // Do not exempt /usr/local: Homebrew cores must be detected on Intel Macs too.
+    const char *prefixes[] = {"/System/", "/usr/bin/", "/usr/sbin/", "/usr/libexec/", "/bin/", "/sbin/", "/Library/Apple/"};
     for (size_t i = 0; i < sizeof(prefixes) / sizeof(*prefixes); i++)
         if (strncmp(path, prefixes[i], strlen(prefixes[i])) == 0) return true;
     const char *name = strrchr(path, '/');
@@ -29,47 +28,107 @@ static bool protected_path(const char *path) {
                     !strcmp(name, "/midog-watchdog") || !strcmp(name, "/com.xx.midog.mihomo"));
 }
 
-// Exact paths only. No globbing, basename matching, commands or shell expansion.
-static bool load_rules(const char *path, bool trusted) {
-    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
-    if (fd < 0) { perror(path); return false; }
-    struct stat st;
-    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size > 1024 * 1024 ||
-        (trusted && (st.st_uid != 0 || (st.st_mode & 022)))) {
-        fprintf(stderr, "Unsafe or oversized rules file\n"); close(fd); return false;
+static bool listed(enum rule_kind kind, const char *value) {
+    for (size_t i = 0; i < CATALOG_COUNT; i++)
+        if (catalog[i].kind == kind && !strcmp(value, catalog[i].value)) return true;
+    return false;
+}
+
+// Metadata is cached by plist location and file identity, not by app display name.
+// Bounded memory; replacement or edits invalidate both positive and negative entries.
+struct bundle_cache {
+    char *path;
+    struct stat info;
+    int result; // -1: own app, 0: unknown, 1: catalogued proxy
+};
+static struct bundle_cache bundle_cache[BUNDLE_CACHE_SIZE];
+static size_t cache_next;
+
+static int bundle_result(const char *plist_path) {
+    struct stat info;
+    if (lstat(plist_path, &info) || !S_ISREG(info.st_mode) || info.st_size <= 0 || info.st_size > 1024 * 1024) return 0;
+    struct bundle_cache *slot = NULL;
+    for (size_t i = 0; i < BUNDLE_CACHE_SIZE; i++) {
+        struct bundle_cache *entry = &bundle_cache[i];
+        if (!entry->path || strcmp(entry->path, plist_path)) continue;
+        slot = entry;
+        if (info.st_dev == entry->info.st_dev && info.st_ino == entry->info.st_ino &&
+            info.st_size == entry->info.st_size &&
+            info.st_mtimespec.tv_sec == entry->info.st_mtimespec.tv_sec &&
+            info.st_mtimespec.tv_nsec == entry->info.st_mtimespec.tv_nsec &&
+            info.st_ctimespec.tv_sec == entry->info.st_ctimespec.tv_sec &&
+            info.st_ctimespec.tv_nsec == entry->info.st_ctimespec.tv_nsec) return entry->result;
+        break;
     }
-    FILE *file = fdopen(fd, "r");
-    if (!file) { close(fd); return false; }
-    char *line = NULL;
-    size_t capacity = 0;
-    ssize_t length;
-    bool valid = true;
-    rule_count = 0;
-    while ((length = getline(&line, &capacity, file)) >= 0) {
-        size_t n = (size_t)length;
-        if (strlen(line) != n) { valid = false; break; }
-        if (n && line[n - 1] == '\n') line[--n] = 0;
-        if (n && line[n - 1] == '\r') line[--n] = 0;
-        if (!n || line[0] == '#') continue;
-        if (n >= PROC_PIDPATHINFO_MAXSIZE || line[0] != '/' || line[n - 1] == '/' ||
-            strpbrk(line, "*?[]\t\r") || strstr(line, "/../") || strstr(line, "/./") ||
-            strstr(line, "//") || protected_path(line) || rule_count == MAX_RULES) {
-            fprintf(stderr, "Invalid or protected executable path: %s\n", line);
-            valid = false; break;
+    int fd = open(plist_path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0) return 0;
+    struct stat opened;
+    if (fstat(fd, &opened) || !S_ISREG(opened.st_mode) || opened.st_dev != info.st_dev ||
+        opened.st_ino != info.st_ino || opened.st_size != info.st_size) { close(fd); return 0; }
+    char *bytes = malloc((size_t)info.st_size);
+    if (!bytes) { close(fd); return 0; }
+    size_t used = 0;
+    while (used < (size_t)info.st_size) {
+        ssize_t n = read(fd, bytes + used, (size_t)info.st_size - used);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        used += (size_t)n;
+    }
+    close(fd);
+    if (used != (size_t)info.st_size) { free(bytes); return 0; }
+    CFDataRef data = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)bytes, (CFIndex)used);
+    free(bytes);
+    if (!data) return 0;
+    CFPropertyListRef plist = CFPropertyListCreateWithData(kCFAllocatorDefault, data, kCFPropertyListImmutable, NULL, NULL);
+    CFRelease(data);
+    int result = 0;
+    if (plist && CFGetTypeID(plist) == CFDictionaryGetTypeID()) {
+        CFTypeRef identifier = CFDictionaryGetValue((CFDictionaryRef)plist, CFSTR("CFBundleIdentifier"));
+        char id[512];
+        if (identifier && CFGetTypeID(identifier) == CFStringGetTypeID() &&
+            CFStringGetCString((CFStringRef)identifier, id, sizeof(id), kCFStringEncodingUTF8)) {
+            if (!strcmp(id, "com.xx.midog") || !strcmp(id, "com.xx.midog.filter")) result = -1;
+            else if (listed(RULE_BUNDLE, id)) result = 1;
         }
-        strcpy(rules[rule_count++], line);
     }
-    if (ferror(file)) valid = false;
-    free(line);
-    fclose(file);
-    return valid;
+    if (plist) CFRelease(plist);
+    if (!slot) slot = &bundle_cache[cache_next++ % BUNDLE_CACHE_SIZE];
+    free(slot->path);
+    slot->path = strdup(plist_path);
+    slot->info = info;
+    slot->result = result;
+    return result;
 }
 
 static bool matches(const char *path) {
     if (protected_path(path)) return false;
-    for (size_t i = 0; i < rule_count; i++)
-        if (!strcmp(path, rules[i])) return true;
-    return false;
+    // Walk enclosing app bundles, including renamed apps and nested helper apps.
+    // No directory restriction: Downloads, App Translocation and external volumes work.
+    const char *suffixes[] = {".app/Contents/", ".systemextension/Contents/", ".appex/Contents/"};
+    bool bundle_match = false;
+    for (size_t i = 0; i < sizeof(suffixes) / sizeof(*suffixes); i++) {
+        const char *cursor = path;
+        while ((cursor = strstr(cursor, suffixes[i]))) {
+            size_t prefix = (size_t)(cursor - path) + strlen(suffixes[i]);
+            char plist[PROC_PIDPATHINFO_MAXSIZE];
+            if (prefix + strlen("Info.plist") >= sizeof(plist)) break;
+            memcpy(plist, path, prefix);
+            strcpy(plist + prefix, "Info.plist");
+            int result = bundle_result(plist);
+            if (result == -1) return false;
+            if (result == 1) bundle_match = true;
+            cursor += strlen(suffixes[i]);
+        }
+    }
+    const char *name = strrchr(path, '/');
+    return bundle_match || (name && listed(RULE_EXECUTABLE, name + 1));
+}
+
+static void clear_cache(void) {
+    for (size_t i = 0; i < BUNDLE_CACHE_SIZE; i++) {
+        free(bundle_cache[i].path);
+        bundle_cache[i].path = NULL;
+    }
 }
 
 struct pending {
@@ -116,7 +175,7 @@ static int monitor(bool dry) {
             // Recheck both identity and executable immediately before signaling a PID.
             if (!identity(pid, &after) || before.pbi_start_tvsec != after.pbi_start_tvsec ||
                 before.pbi_start_tvusec != after.pbi_start_tvusec ||
-                proc_pidpath(pid, recheck, sizeof(recheck)) <= 0 || strcmp(path, recheck)) continue;
+                proc_pidpath(pid, recheck, sizeof(recheck)) <= 0 || strcmp(path, recheck) || !matches(recheck)) continue;
             if (kill(pid, sig) == 0) {
                 syslog(LOG_NOTICE, "Sent %s to pid=%d path=%s", sig == SIGTERM ? "TERM" : "KILL", pid, path);
                 current[current_count++] = (struct pending){pid, before.pbi_start_tvsec, before.pbi_start_tvusec};
@@ -129,22 +188,24 @@ static int monitor(bool dry) {
         free(previous); previous = current; previous_count = current_count;
         if (!dry && !stopping) sleep(INTERVAL);
     } while (!dry && !stopping);
-    free(previous); free(pids); closelog();
+    free(previous); free(pids); clear_cache(); closelog();
     return status;
 }
 
 int main(int argc, char **argv) {
-    bool dry = false, check = false;
-    const char *config = RULES_FILE;
-    if (argc == 3 && (!strcmp(argv[1], "--check") || !strcmp(argv[1], "--dry-run"))) {
-        check = !strcmp(argv[1], "--check"); dry = !check; config = argv[2];
-    } else if (argc != 1) {
-        fprintf(stderr, "Usage: midog-watchdog [--check|--dry-run FILE]\n"); return 2;
+    if (argc == 2 && !strcmp(argv[1], "--list")) {
+        for (size_t i = 0; i < CATALOG_COUNT; i++)
+            printf("%s\t%s\t%s\t%s\n", catalog[i].project,
+                   catalog[i].kind == RULE_BUNDLE ? "bundle" : "executable",
+                   catalog[i].value, catalog[i].source);
+        return 0;
     }
-    if (!check && !dry && geteuid() != 0) {
+    bool dry = argc == 2 && !strcmp(argv[1], "--dry-run");
+    if (argc != 1 && !dry) {
+        fprintf(stderr, "Usage: midog-watchdog [--list|--dry-run]\n"); return 2;
+    }
+    if (!dry && geteuid() != 0) {
         fprintf(stderr, "Install as a launchd system service to enforce rules\n"); return 1;
     }
-    if (!load_rules(config, !check && !dry)) return 1;
-    if (check) { printf("Valid rules: %zu\n", rule_count); return 0; }
     return monitor(dry);
 }

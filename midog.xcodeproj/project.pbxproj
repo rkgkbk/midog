@@ -39,6 +39,7 @@ B10000000000000000000005 = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147
 		A10000000000000000000018 /* Blocklist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Blocklist.swift; sourceTree = "<group>"; };
 B10000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = midogWatchdog/watchdog.c; sourceTree = SOURCE_ROOT; };
 B10000000000000000000004 = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; path = "midog-watchdog"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1000000000000000000000D /* proxy_catalog.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = midogWatchdog/proxy_catalog.h; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -66,6 +67,7 @@ B10000000000000000000004 = {isa = PBXFileReference; explicitFileType = "compiled
 			children = (
 				F57EF6DA3008AFFF00113AE8 /* midog */,
                 B10000000000000000000002 /* watchdog.c */,
+                B1000000000000000000000D /* proxy_catalog.h */,
 				A10000000000000000000017 /* midogFilter */,
 				F57EF6D93008AFFF00113AE8 /* Products */,
 			);
@@ -416,8 +418,8 @@ B10000000000000000000006 = {isa = PBXSourcesBuildPhase; buildActionMask = 214748
 		};
 			name = Release;
 		};
-B10000000000000000000009 = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_NAME = "midog-watchdog"; SKIP_INSTALL = YES; GCC_OPTIMIZATION_LEVEL = s; CODE_SIGN_STYLE = Automatic; ENABLE_HARDENED_RUNTIME = YES; }; name = Debug; };
-B1000000000000000000000A = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_NAME = "midog-watchdog"; SKIP_INSTALL = YES; GCC_OPTIMIZATION_LEVEL = s; CODE_SIGN_STYLE = Automatic; ENABLE_HARDENED_RUNTIME = YES; }; name = Release; };
+B10000000000000000000009 = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_NAME = "midog-watchdog"; SKIP_INSTALL = YES; GCC_OPTIMIZATION_LEVEL = s; OTHER_LDFLAGS = ("-framework", CoreFoundation, ); CODE_SIGN_STYLE = Automatic; ENABLE_HARDENED_RUNTIME = YES; }; name = Debug; };
+B1000000000000000000000A = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_NAME = "midog-watchdog"; SKIP_INSTALL = YES; GCC_OPTIMIZATION_LEVEL = s; OTHER_LDFLAGS = ("-framework", CoreFoundation, ); CODE_SIGN_STYLE = Automatic; ENABLE_HARDENED_RUNTIME = YES; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
