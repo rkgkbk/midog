@@ -12,6 +12,7 @@ struct SettingsView: View {
             VStack(spacing: 14) {
                 kernelCard
                 filterCard
+                WatchdogSettingsView()
                 tunCard
                 settingsJSONCard
                 dataCard

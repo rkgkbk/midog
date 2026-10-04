@@ -54,6 +54,29 @@ SwiftUI + AppKit 原生界面，搭配内置 mihomo 内核。节点、订阅、�
 
 > 首次启动内核会请求管理员授权，以安装 launchd 系统服务。TUN 未生效时，可在总览页重启内核并检查日志。
 
+## 独立轻量代理监控
+
+在 **设置 → 第三方代理监控** 中核对名单并点击「启用监控」，通过 macOS 管理员授权安装。监控不依赖 midog 界面或 mihomo 内核：系统开机后由 launchd 启动，异常退出自动恢复；退出 midog 不影响它。可在同一位置更新名单、刷新状态或卸载。
+
+- `midog-watchdog` 用 C 编写，只链接系统 C 库。每 3 秒通过 libproc 扫描一次，不调用 `ps` / `pgrep`，也不启动 midog。
+- 名单位于仓库 `midog/Resources/proxies.list`，每行一个完整可执行文件路径，`#` 开头为注释。内置路径是常见安装位置示例，使用前需核对；可从「活动监视器」检查进程的可执行文件位置。最多 256 条，不支持通配符或只写进程名。
+- 按可执行文件完整路径区分进程；先发送 SIGTERM，下一轮仍为同一进程时发送 SIGKILL。第三方客户端或服务再次拉起的进程，会在后续扫描处理。客户端和内核路径应分别列入。
+- 拒绝系统路径和 midog 自身程序路径。这里使用路径匹配，不校验第三方签名；移动、改名、自定义内核或未列入名单的辅助进程不在覆盖范围内，仍需配合内容过滤使用。
+- 安装副本位于 `/Library/Application Support/midog-watchdog/`，由 root 持有；编辑设置页名单后点击「保存并更新」才会应用。它不改动第三方服务配置，也不阻止管理员卸载。
+
+排障时可运行以下只读命令（将应用路径替换为实际位置）：
+
+```bash
+# 验证名单格式；不终止进程
+/Applications/midog.app/Contents/Library/LaunchServices/midog-watchdog --check /path/to/proxies.list
+# 只打印当前权限可见的命中进程，不终止它们
+/Applications/midog.app/Contents/Library/LaunchServices/midog-watchdog --dry-run /path/to/proxies.list
+launchctl print system/com.xx.midog.watchdog
+log show --last 10m --predicate 'process == "midog-watchdog"'
+```
+
+开发验证：`python3 tests/WatchdogCheck.py`。测试只对临时创建的测试进程发送信号，无需 root，不安装系统服务。Xcode 构建会自动编译并嵌入监控程序，发布时随 App 签名。
+
 ## 安装与系统要求
 
 - macOS 15（Sequoia）或更高版本。

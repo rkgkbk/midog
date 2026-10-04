@@ -1,0 +1,9 @@
+# One exact executable path per line. No wildcards. Paths are case sensitive.
+# Include both the GUI and its core if the app restarts its core.
+/Applications/ClashX.app/Contents/MacOS/ClashX
+/Applications/ClashX Pro.app/Contents/MacOS/ClashX Pro
+/Applications/Clash Verge.app/Contents/MacOS/clash-verge
+/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo
+/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo-alpha
+/Applications/Surge.app/Contents/MacOS/Surge
+/Applications/Shadowrocket.app/Contents/MacOS/Shadowrocket

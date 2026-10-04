@@ -12,6 +12,8 @@
 		A10000000000000000000005 /* Blocklist.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* Blocklist.swift */; };
 		A10000000000000000000003 /* category-porn.list in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* category-porn.list */; };
 		A10000000000000000000004 /* com.xx.midog.filter.systemextension in SystemExtensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* com.xx.midog.filter.systemextension */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+B10000000000000000000001 = {isa = PBXBuildFile; fileRef = B10000000000000000000002; };
+B10000000000000000000003 = {isa = PBXBuildFile; fileRef = B10000000000000000000004; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -23,6 +25,7 @@
 			files = (A10000000000000000000004 /* com.xx.midog.filter.systemextension in SystemExtensions */, );
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+B10000000000000000000005 = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = Contents/Library/LaunchServices; dstSubfolderSpec = 1; files = (B10000000000000000000003, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -34,6 +37,8 @@
 		A10000000000000000000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A10000000000000000000016 /* midogFilter.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = midogFilter.entitlements; sourceTree = "<group>"; };
 		A10000000000000000000018 /* Blocklist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Blocklist.swift; sourceTree = "<group>"; };
+B10000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = midogWatchdog/watchdog.c; sourceTree = SOURCE_ROOT; };
+B10000000000000000000004 = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; path = "midog-watchdog"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -60,6 +65,7 @@
 			isa = PBXGroup;
 			children = (
 				F57EF6DA3008AFFF00113AE8 /* midog */,
+                B10000000000000000000002 /* watchdog.c */,
 				A10000000000000000000017 /* midogFilter */,
 				F57EF6D93008AFFF00113AE8 /* Products */,
 			);
@@ -69,6 +75,7 @@
 			isa = PBXGroup;
 			children = (
 				F57EF6D83008AFFF00113AE8 /* midog.app */,
+                B10000000000000000000004 /* midog-watchdog */,
 				A10000000000000000000014 /* com.xx.midog.filter.systemextension */,
 			);
 			name = Products;
@@ -91,10 +98,11 @@
 				F57EF6D53008AFFF00113AE8 /* Frameworks */,
 				F57EF6D63008AFFF00113AE8 /* Resources */,
 				A10000000000000000000021 /* SystemExtensions */,
+                B10000000000000000000005 /* Watchdog */,
 			);
 			buildRules = (
 			);
-			dependencies = (A10000000000000000000026 /* PBXTargetDependency */, );
+			dependencies = (A10000000000000000000026 /* PBXTargetDependency */, B1000000000000000000000C, );
 			fileSystemSynchronizedGroups = (
 				F57EF6DA3008AFFF00113AE8 /* midog */,
 			);
@@ -116,14 +124,17 @@
 			productReference = A10000000000000000000014 /* com.xx.midog.filter.systemextension */;
 			productType = "com.apple.product-type.system-extension";
 		};
+B10000000000000000000007 = {isa = PBXNativeTarget; buildConfigurationList = B10000000000000000000008; buildPhases = (B10000000000000000000006, ); buildRules = (); dependencies = (); name = "midog-watchdog"; productName = "midog-watchdog"; productReference = B10000000000000000000004; productType = "com.apple.product-type.tool"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXContainerItemProxy section */
 		A10000000000000000000027 /* PBXContainerItemProxy */ = {isa = PBXContainerItemProxy; containerPortal = F57EF6D03008AFFF00113AE8 /* Project object */; proxyType = 1; remoteGlobalIDString = A10000000000000000000025; remoteInfo = midogFilter; };
+B1000000000000000000000B = {isa = PBXContainerItemProxy; containerPortal = F57EF6D03008AFFF00113AE8; proxyType = 1; remoteGlobalIDString = B10000000000000000000007; remoteInfo = "midog-watchdog"; };
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXTargetDependency section */
 		A10000000000000000000026 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = A10000000000000000000025 /* midogFilter */; targetProxy = A10000000000000000000027 /* PBXContainerItemProxy */; };
+B1000000000000000000000C = {isa = PBXTargetDependency; target = B10000000000000000000007; targetProxy = B1000000000000000000000B; };
 /* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
@@ -154,6 +165,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+                B10000000000000000000007 /* midog-watchdog */,
 				F57EF6D73008AFFF00113AE8 /* midog */,
 				A10000000000000000000025 /* midogFilter */,
 			);
@@ -180,6 +192,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+B10000000000000000000006 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B10000000000000000000001, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
@@ -403,6 +416,8 @@
 		};
 			name = Release;
 		};
+B10000000000000000000009 = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_NAME = "midog-watchdog"; SKIP_INSTALL = YES; GCC_OPTIMIZATION_LEVEL = s; CODE_SIGN_STYLE = Automatic; ENABLE_HARDENED_RUNTIME = YES; }; name = Debug; };
+B1000000000000000000000A = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_NAME = "midog-watchdog"; SKIP_INSTALL = YES; GCC_OPTIMIZATION_LEVEL = s; CODE_SIGN_STYLE = Automatic; ENABLE_HARDENED_RUNTIME = YES; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -425,6 +440,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+B10000000000000000000008 = {isa = XCConfigurationList; buildConfigurations = (B10000000000000000000009, B1000000000000000000000A, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 	};
 	rootObject = F57EF6D03008AFFF00113AE8 /* Project object */;
