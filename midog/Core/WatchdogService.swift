@@ -83,10 +83,4 @@ nonisolated enum WatchdogService {
         try Privileged.run(command)
     }
 
-    static func uninstall() throws {
-        let q = Privileged.quoted
-        try Privileged.run("set -e; if /bin/launchctl print system/\(label) >/dev/null 2>&1; then "
-            + "/bin/launchctl bootout system/\(label); fi; "
-            + "/bin/rm -f \(q(plist)) \(q(binary)) \(q(legacyRulesPath))")
-    }
 }

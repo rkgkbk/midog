@@ -8,6 +8,8 @@ struct DashboardView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
+                FocusSummaryCard()
+                ProtectionStatusView { page = .settings }
                 if store.data.sources.isEmpty {
                     onboardingCard
                 }

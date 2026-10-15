@@ -8,6 +8,14 @@ nonisolated enum CoreService {
     private static let legacyBinary = "/Library/PrivilegedHelperTools/\(label)"
     static let plist = "/Library/LaunchDaemons/\(label).plist"
 
+    static let focusRulesDirectory = "/Library/Application Support/midog-focus"
+    static var supportsFocusRules: Bool {
+        guard let bytes = FileManager.default.contents(atPath: plist),
+              let job = try? PropertyListSerialization.propertyList(from: bytes, format: nil) as? [String: Any],
+              let environment = job["EnvironmentVariables"] as? [String: String] else { return false }
+        return environment["SAFE_PATHS"] == focusRulesDirectory
+    }
+
     static var installed: Bool { FileManager.default.fileExists(atPath: plist) }
 
     static func pid() -> Int32? {
@@ -36,6 +44,7 @@ nonisolated enum CoreService {
             "Label": label,
             "ProgramArguments": [binary, "-d", dataDir.path],
             "WorkingDirectory": dataDir.path,
+            "EnvironmentVariables": ["SAFE_PATHS": focusRulesDirectory],
             "RunAtLoad": true,
             "KeepAlive": true,
             "ThrottleInterval": 2,

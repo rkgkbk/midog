@@ -14,6 +14,10 @@
 		A10000000000000000000004 /* com.xx.midog.filter.systemextension in SystemExtensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* com.xx.midog.filter.systemextension */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 B10000000000000000000001 = {isa = PBXBuildFile; fileRef = B10000000000000000000002; };
 B10000000000000000000003 = {isa = PBXBuildFile; fileRef = B10000000000000000000004; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+C10000000000000000000000 /* FocusState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000000; };
+C10000000000000000000001 /* FocusIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001; };
+C10000000000000000000002 /* FocusAuthority.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002; };
+C10000000000000000000003 /* FocusProxySync.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000003; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -40,6 +44,10 @@ B10000000000000000000005 = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147
 B10000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = midogWatchdog/watchdog.c; sourceTree = SOURCE_ROOT; };
 B10000000000000000000004 = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; path = "midog-watchdog"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1000000000000000000000D /* proxy_catalog.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = midogWatchdog/proxy_catalog.h; sourceTree = SOURCE_ROOT; };
+C20000000000000000000000 /* FocusState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "midog/Core/FocusState.swift"; sourceTree = SOURCE_ROOT; };
+C20000000000000000000001 /* FocusIPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "midog/Core/FocusIPC.swift"; sourceTree = SOURCE_ROOT; };
+C20000000000000000000002 /* FocusAuthority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "midogFilter/FocusAuthority.swift"; sourceTree = SOURCE_ROOT; };
+C20000000000000000000003 /* FocusProxySync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "midogFilter/FocusProxySync.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -85,7 +93,7 @@ B10000000000000000000004 = {isa = PBXFileReference; explicitFileType = "compiled
 		};
 		A10000000000000000000017 /* midogFilter */ = {
 			isa = PBXGroup;
-			children = (A10000000000000000000011 /* main.swift */, A10000000000000000000012 /* FilterDataProvider.swift */, A10000000000000000000018 /* Blocklist.swift */, A10000000000000000000015 /* Info.plist */, A10000000000000000000016 /* midogFilter.entitlements */, );
+			children = (C20000000000000000000003, C20000000000000000000002, C20000000000000000000001, C20000000000000000000000, A10000000000000000000011 /* main.swift */, A10000000000000000000012 /* FilterDataProvider.swift */, A10000000000000000000018 /* Blocklist.swift */, A10000000000000000000015 /* Info.plist */, A10000000000000000000016 /* midogFilter.entitlements */, );
 			path = midogFilter;
 			sourceTree = "<group>";
 		};
@@ -186,7 +194,7 @@ B1000000000000000000000C = {isa = PBXTargetDependency; target = B100000000000000
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A10000000000000000000023 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* main.swift in Sources */, A10000000000000000000002 /* FilterDataProvider.swift in Sources */, A10000000000000000000005 /* Blocklist.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000023 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* main.swift in Sources */, C10000000000000000000003, C10000000000000000000002, C10000000000000000000001, C10000000000000000000000, A10000000000000000000002 /* FilterDataProvider.swift in Sources */, A10000000000000000000005 /* Blocklist.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
 		F57EF6D43008AFFF00113AE8 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -324,7 +332,7 @@ B10000000000000000000006 = {isa = PBXSourcesBuildPhase; buildActionMask = 214748
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 3;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
@@ -356,7 +364,7 @@ B10000000000000000000006 = {isa = PBXSourcesBuildPhase; buildActionMask = 214748
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 3;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
@@ -385,7 +393,7 @@ B10000000000000000000006 = {isa = PBXSourcesBuildPhase; buildActionMask = 214748
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = midogFilter/midogFilter-debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 3;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = midogFilter/Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 15.7;
@@ -404,7 +412,7 @@ B10000000000000000000006 = {isa = PBXSourcesBuildPhase; buildActionMask = 214748
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = midogFilter/midogFilter.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 3;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = midogFilter/Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 15.7;

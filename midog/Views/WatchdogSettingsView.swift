@@ -16,14 +16,11 @@ struct WatchdogSettingsView: View {
                 MiniButton(title: "刷新状态", disabled: busy) {
                     Task { await refresh() }
                 }
-                if installed {
-                    MiniButton(title: "卸载监控", disabled: busy) { apply(uninstall: true) }
-                }
                 MiniButton(title: busy ? "处理中…" : (installed ? "更新监控" : "启用监控"),
-                           disabled: busy || !loaded) { apply(uninstall: false) }
+                           disabled: busy || !loaded) { apply() }
             }
             Text(status).font(.system(size: 12.5)).foregroundStyle(T.fg)
-            Text("独立轻量进程，由系统开机启动和自动恢复；退出 midog 或停止内核后仍生效。命中的代理先正常退出，3 秒后仍存活则强制结束。启用和更新需管理员授权。")
+            Text("独立轻量进程，由系统开机启动和自动恢复；退出 midog 或停止内核后仍生效。命中的代理先正常退出，3 秒后仍存活则强制结束。启用和更新需管理员授权，应用内不提供停用或卸载入口。")
                 .font(.system(size: 11)).foregroundStyle(T.muted)
             Text("内置目录按应用标识和内核文件名识别，不受安装目录影响。目录随版本更新，不可编辑；不会联网下载规则。")
                 .font(.system(size: 11)).foregroundStyle(T.muted)
@@ -65,16 +62,15 @@ struct WatchdogSettingsView: View {
         installed = WatchdogService.installed
     }
 
-    private func apply(uninstall: Bool) {
+    private func apply() {
         busy = true
         Task {
             defer { busy = false }
             do {
                 try await Task.detached {
-                    if uninstall { try WatchdogService.uninstall() }
-                    else { try WatchdogService.install() }
+                    try WatchdogService.install()
                 }.value
-                store.toast(uninstall ? "已卸载独立监控" : "已安装并加载独立监控")
+                store.toast("已安装并加载独立监控")
             } catch { store.toast(error.localizedDescription, error: true) }
             await refresh()
         }

@@ -10,6 +10,7 @@ enum CoreServiceCheck {
         assert((CoreService.binary as NSString).lastPathComponent == "midog-core")
         assert(plist["ProgramArguments"] as? [String] == [CoreService.binary, "-d", dir.path])
         assert(plist["WorkingDirectory"] as? String == dir.path)
+        assert((plist["EnvironmentVariables"] as? [String: String])?["SAFE_PATHS"] == CoreService.focusRulesDirectory)
         assert(plist["KeepAlive"] as? Bool == true)
         assert(plist["RunAtLoad"] as? Bool == true)
     }

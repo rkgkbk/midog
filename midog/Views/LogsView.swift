@@ -8,7 +8,7 @@ struct LogsView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Text("\(store.logs.count) 条（最多保留 500 条）")
+                Text("\(store.logs.count) 条（最多保留 100 条）")
                     .font(.system(size: 11.5))
                     .foregroundStyle(T.muted)
                 Spacer()
@@ -46,7 +46,7 @@ struct LogsView: View {
                         .padding(14)
                     }
                     .background(Color(hex: 0x0E1418))
-                    .onChange(of: store.logs.count) {
+                    .onChange(of: store.logs.last?.id) {
                         if autoScroll, let last = store.logs.last {
                             proxy.scrollTo(last.id, anchor: .bottom)
                         }

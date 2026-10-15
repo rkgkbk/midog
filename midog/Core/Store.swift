@@ -96,7 +96,12 @@ final class Store: ObservableObject {
 
     private var trafficTask: Task<Void, Never>?
     private var logTask: Task<Void, Never>?
-    private let maxLogs = 500
+    private var trafficSession: URLSession?
+    private var logSession: URLSession?
+    private var systemSleeping = false
+    private let maxLogs = 100
+    private var pendingLogs = LogBuffer<LogEntry>(capacity: 100)
+    private var logFlushTask: Task<Void, Never>?
     private let currentRouteDelayRefreshInterval: TimeInterval = 300
     private var lastAutoDelayTestAt: [String: Date] = [:]
 
@@ -166,14 +171,18 @@ final class Store: ObservableObject {
     // ============ 配置生成与应用 ============
 
     /// 生成主配置（每次重读 rules.txt，支持外部编辑器直接改文件）
-    func generateConfig() -> String? {
+    func generateConfig(includeFocus: Bool = false) -> String? {
         if let text = try? String(contentsOf: AppPaths.rulesFile, encoding: .utf8) {
             rulesText = text.replacingOccurrences(of: "\r\n", with: "\n")
         }
         let rules = rulesText.components(separatedBy: "\n")
+        let focusSupported = includeFocus || !CoreService.installed || CoreService.supportsFocusRules
+        let focusFile = focusSupported && FileManager.default.fileExists(atPath: FocusIPC.rulesFile.path)
+            ? FocusIPC.rulesFile : nil
         switch ConfigGenerator.generate(data: data, rules: rules,
                                         configsDir: AppPaths.configsDir,
-                                        ruleProvidersDir: AppPaths.ruleProvidersDir) {
+                                        ruleProvidersDir: AppPaths.ruleProvidersDir,
+                                        focusRulesFile: focusFile) {
         case .success(let output):
             do {
                 try output.yaml.write(to: AppPaths.outputConfig, atomically: true, encoding: .utf8)
@@ -408,7 +417,7 @@ final class Store: ObservableObject {
     func restartCore() async {
         busy = true
         defer { busy = false }
-        if let error = generateConfig() {
+        if let error = generateConfig(includeFocus: true) {
             toast(error, error: true)
             return
         }
@@ -526,13 +535,22 @@ final class Store: ObservableObject {
     }
 
     private func appendLog(_ level: LogEntry.Level, _ message: String) {
-        logs.append(LogEntry(date: Date(), level: level, message: message))
-        if logs.count > maxLogs {
-            logs.removeFirst(logs.count - maxLogs)
+        pendingLogs.append(LogEntry(date: Date(), level: level, message: message))
+        guard logFlushTask == nil else { return }
+        // Publishing every line invalidates the entire Store-backed UI. Bound updates
+        // to twice a second, even when a resumed stream delivers a large backlog.
+        logFlushTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+            guard let self else { return }
+            self.logFlushTask = nil
+            self.logs = Array((self.logs + self.pendingLogs.drain()).suffix(self.maxLogs))
         }
     }
 
     func clearLogs() {
+        logFlushTask?.cancel()
+        logFlushTask = nil
+        _ = pendingLogs.drain()
         logs = []
     }
 
@@ -1278,6 +1296,7 @@ final class Store: ObservableObject {
             if logTask == nil { startLogStream() }
         } catch {
             connected = false
+            stopTrafficStream()
             stopLogStream()
         }
     }
@@ -1395,6 +1414,10 @@ final class Store: ObservableObject {
         await bootstrapKernel()
         Task { await refreshStaleConvertedProviders() }
         while !Task.isCancelled {
+            if systemSleeping {
+                do { try await Task.sleep(for: .seconds(3)) } catch { break }
+                continue
+            }
             await pollTick()
             // 旧版的绑定可能已在内核运行、磁盘配置却已更新；以实际出站为准。
             if connected, proxies["DIRECT-WIFI"]?.type?.lowercased() == "direct",
@@ -1490,12 +1513,28 @@ final class Store: ObservableObject {
         }
     }
 
+    func systemWillSleep() {
+        systemSleeping = true
+        stopTrafficStream()
+        stopLogStream()
+    }
+
+    func systemDidWake() {
+        // Discard pre-sleep streams; the next poll reconnects to current data.
+        stopTrafficStream()
+        stopLogStream()
+        tunMissingSince = nil
+        systemSleeping = false
+    }
+
     private func startTrafficStream() {
-        guard trafficTask == nil else { return }
+        guard !systemSleeping, trafficTask == nil else { return }
+        let session = URLSession(configuration: .ephemeral)
+        trafficSession = session
         let client = self.client
         trafficTask = Task { [weak self] in
             do {
-                let (bytes, _) = try await client.trafficStream()
+                let (bytes, _) = try await client.trafficStream(session: session)
                 for try await line in bytes.lines {
                     guard !Task.isCancelled else { break }
                     guard let d = line.data(using: .utf8),
@@ -1503,7 +1542,7 @@ final class Store: ObservableObject {
                     let up = (obj["up"] as? Int) ?? 0
                     let down = (obj["down"] as? Int) ?? 0
                     await MainActor.run {
-                        guard let self else { return }
+                        guard let self, self.trafficSession === session, !self.systemSleeping else { return }
                         self.upRate = up
                         self.downRate = down
                         self.upHistory.append(Double(up))
@@ -1513,8 +1552,10 @@ final class Store: ObservableObject {
                     }
                 }
             } catch { /* 连接断开由轮询重建 */ }
+            session.invalidateAndCancel()
             await MainActor.run {
-                guard let self else { return }
+                guard let self, self.trafficSession === session else { return }
+                self.trafficSession = nil
                 self.trafficTask = nil
                 self.upRate = 0
                 self.downRate = 0
@@ -1523,6 +1564,8 @@ final class Store: ObservableObject {
     }
 
     private func stopTrafficStream() {
+        trafficSession?.invalidateAndCancel()
+        trafficSession = nil
         trafficTask?.cancel()
         trafficTask = nil
         upRate = 0
@@ -1532,24 +1575,32 @@ final class Store: ObservableObject {
     }
 
     private func startLogStream() {
-        guard logTask == nil else { return }
+        guard !systemSleeping, logTask == nil else { return }
+        let session = URLSession(configuration: .ephemeral)
+        logSession = session
         let client = self.client
         logTask = Task { [weak self] in
             do {
-                let (bytes, _) = try await client.logStream()
+                let (bytes, _) = try await client.logStream(session: session)
                 for try await line in bytes.lines {
                     guard !Task.isCancelled else { break }
                     guard let data = line.data(using: .utf8),
                           let object = try? JSONSerialization.jsonObject(with: data) as? [String: String],
                           let message = object["payload"] else { continue }
-                    self?.appendLog(object["type"] == "error" ? .error : .info, message)
+                    guard let self, self.logSession === session, !self.systemSleeping else { break }
+                    self.appendLog(object["type"] == "error" ? .error : .info, message)
                 }
             } catch { /* 下次轮询重连 */ }
-            self?.logTask = nil
+            session.invalidateAndCancel()
+            guard let self, self.logSession === session else { return }
+            self.logSession = nil
+            self.logTask = nil
         }
     }
 
     private func stopLogStream() {
+        logSession?.invalidateAndCancel()
+        logSession = nil
         logTask?.cancel()
         logTask = nil
     }

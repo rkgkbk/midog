@@ -38,12 +38,14 @@ final class ContentFilterInstaller: NSObject, OSSystemExtensionRequestDelegate {
             do {
                 let manager = NEFilterManager.shared()
                 try await manager.loadFromPreferences()
-                let configuration = NEFilterProviderConfiguration()
+                let configuration = manager.providerConfiguration ?? NEFilterProviderConfiguration()
                 configuration.filterSockets = true
                 configuration.filterDataProviderBundleIdentifier = identifier
                 manager.providerConfiguration = configuration
                 manager.localizedDescription = "midog 强制域名过滤"
                 manager.isEnabled = true
+                // Refresh the stored provider signature after an extension update,
+                // including ad-hoc development builds whose designated requirement changes.
                 try await manager.saveToPreferences()
                 Store.shared.contentFilterStatus = "系统内容过滤已配置，请确认系统设置中已启用"
             } catch {

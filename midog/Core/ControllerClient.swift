@@ -210,13 +210,13 @@ struct ControllerClient {
     }
 
     /// /traffic 流式接口：每秒推送一行 {"up": n, "down": n}
-    func trafficStream() async throws -> (URLSession.AsyncBytes, URLResponse) {
+    func trafficStream(session: URLSession) async throws -> (URLSession.AsyncBytes, URLResponse) {
         let req = try makeRequest("GET", "/traffic", timeout: 3600)
-        return try await URLSession.shared.bytes(for: req)
+        return try await session.bytes(for: req)
     }
 
-    func logStream() async throws -> (URLSession.AsyncBytes, URLResponse) {
+    func logStream(session: URLSession) async throws -> (URLSession.AsyncBytes, URLResponse) {
         let req = try makeRequest("GET", "/logs?level=info", timeout: 3600)
-        return try await URLSession.shared.bytes(for: req)
+        return try await session.bytes(for: req)
     }
 }

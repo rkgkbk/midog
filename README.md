@@ -1,8 +1,6 @@
 <div align="center">
 
-# 妈妈再也不用担心我看片了
-
-**把不健康的网站挡在外面，把清爽的网络留给自己。**
+# **把不健康的网站挡在外面，把清爽的网络留给自己。**
 
 macOS 原生网站拦截与 Clash 代理工具<br>
 SwiftUI + AppKit · 内置 mihomo 内核 · UI 内存约 30 MB
@@ -53,31 +51,6 @@ SwiftUI + AppKit 原生界面，搭配内置 mihomo 内核。节点、订阅、�
 3. 在「节点」页测速，选择要使用的节点。
 
 > 首次启动内核会请求管理员授权，以安装 launchd 系统服务。TUN 未生效时，可在总览页重启内核并检查日志。
-
-## 独立轻量代理监控
-
-在 **设置 → 第三方代理监控** 点击「启用监控」，通过 macOS 管理员授权安装。系统开机后由 launchd 启动，异常退出自动恢复；退出 midog 或停止 mihomo 内核不影响监控。旧版用户点击「更新监控」即可换用新版内置目录。
-
-- `midog-watchdog` 用 C 编写，每 3 秒通过 libproc 扫描一次。仅依赖系统 C 库和用于解析应用元数据的 CoreFoundation，不调用 `ps` / `pgrep`，也不启动 midog。应用标识读取有有界缓存，文件变化后失效。
-- **不依赖安装路径**：用应用 Bundle ID 和内核可执行文件名精确匹配；支持下载目录、App Translocation、外置盘、Homebrew，以及改名后的 App。读取外层应用和嵌套辅助应用、系统扩展的标识。
-- **目录不可编辑**：61 条规则直接编译进守护程序，包含 33 组 GitHub 项目和 3 个上版兼容项，设置页仅展示，没有导入、覆盖或联网下载名单的入口。来源见 [代理识别目录](docs/proxy-catalog.md)，包括 Clash 系、Hiddify、FlClash、V2Ray 系、sing-box、Xray、Shadowsocks、Hysteria、Trojan、Mieru 等。
-- 先发送 SIGTERM，下一轮仍为同一进程时发送 SIGKILL；自动拉起的代理会在后续扫描再次处理。终止前复核 PID 启动时间和可执行文件，排除系统路径及 midog 自身。不会修改第三方 launchd 服务。
-- 程序安装到 `/Library/Application Support/midog-watchdog/`，由 root 持有。更新成功后清理旧版 `proxies.list`，目录更改必须重新发布程序；可在设置中刷新状态或卸载。
-
-目录不能穷尽 GitHub 的所有项目。更改 Bundle ID 且重命名独立内核、解释器运行的代理、未收录版本不保证识别；同名可执行文件也可能命中。这里没有第三方签名校验，管理员仍可替换或卸载服务，系统保护的进程也可能无法终止。应与系统内容过滤配合使用。
-
-排障只读命令（将应用路径替换为实际位置）：
-
-```bash
-# 列出编译进程序的识别规则及上游来源
-/Applications/midog.app/Contents/Library/LaunchServices/midog-watchdog --list
-# 只打印当前权限可见的命中进程，不终止它们
-/Applications/midog.app/Contents/Library/LaunchServices/midog-watchdog --dry-run
-launchctl print system/com.xx.midog.watchdog
-log show --last 10m --predicate 'process == "midog-watchdog"'
-```
-
-开发验证：`python3 tests/WatchdogCheck.py`。测试只对临时创建的测试进程发送信号，无需 root，不安装系统服务。Xcode 构建会自动编译并嵌入监控程序，发布时随 App 签名。
 
 ## 安装与系统要求
 

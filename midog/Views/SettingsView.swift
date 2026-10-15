@@ -4,6 +4,7 @@ import AppKit
 
 struct SettingsView: View {
     @EnvironmentObject var store: Store
+    @ObservedObject private var focus = FocusStore.shared
     @State private var settingsDraft = ""
     @State private var loaded = false
 
@@ -12,6 +13,7 @@ struct SettingsView: View {
             VStack(spacing: 14) {
                 kernelCard
                 filterCard
+                FocusSettingsView()
                 WatchdogSettingsView()
                 tunCard
                 settingsJSONCard
@@ -51,6 +53,17 @@ struct SettingsView: View {
             Text("首次启动需管理员授权注册 launchd 服务；之后系统会按相同参数自动重启内核，退出 midog 不会停止服务。")
                 .font(.system(size: 11))
                 .foregroundStyle(T.muted)
+            if focus.needsProxyUpgrade {
+                Text("已有代理服务需要更新，才能读取专注屏蔽规则。更新会请求管理员授权并重启代理内核。")
+                    .font(.system(size: 11)).foregroundStyle(T.warn)
+                MiniButton(title: "更新代理支持") {
+                    Task {
+                        guard !store.busy else { return }
+                        await store.restartCore()
+                        await focus.refresh()
+                    }
+                }.disabled(store.busy || focus.busy)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
@@ -63,7 +76,7 @@ struct SettingsView: View {
             HStack {
                 SectionTitle("系统内容过滤")
                 Spacer()
-                MiniButton(title: store.contentFilterBusy ? "授权中…" : "授权 / 重试",
+                MiniButton(title: store.contentFilterBusy ? "正在配置…" : "安装 / 更新 / 重试",
                            disabled: store.contentFilterBusy) {
                     ContentFilterInstaller.shared.install()
                 }
@@ -71,7 +84,15 @@ struct SettingsView: View {
             Text(store.contentFilterStatus)
                 .font(.system(size: 12.5))
                 .foregroundStyle(T.fg)
-            Text("独立拦截内置成人域名；midog-core 继续处理代理和分流规则。首次启用需在系统设置中批准。")
+            Text(focus.available ? "专注服务已连接" : "专注服务未连接")
+                .font(.system(size: 12)).foregroundStyle(focus.available ? T.accent : T.warn)
+            if let error = focus.error {
+                Text(error).font(.system(size: 12)).foregroundStyle(T.warn).textSelection(.enabled)
+            }
+            if !focus.proxyStatus.isEmpty {
+                Text(focus.proxyStatus).font(.system(size: 11)).foregroundStyle(T.muted)
+            }
+            Text("内置成人域名拦截和专注网站屏蔽共用此扩展。首次启用需在系统设置中批准。")
                 .font(.system(size: 11))
                 .foregroundStyle(T.muted)
         }

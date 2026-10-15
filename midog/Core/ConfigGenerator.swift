@@ -60,7 +60,7 @@ enum ConfigGenerator {
         var providers: [String]
     }
 
-    static func generate(data: AppData, rules: [String], configsDir: URL, ruleProvidersDir: URL) -> Result<Output, SubscriptionParser.ParseError> {
+    static func generate(data: AppData, rules: [String], configsDir: URL, ruleProvidersDir: URL, focusRulesFile: URL? = nil) -> Result<Output, SubscriptionParser.ParseError> {
         let fm = FileManager.default
         let enabledSources = data.sources.filter {
             $0.enabled && fm.fileExists(atPath: configsDir.appendingPathComponent($0.name).path)
@@ -123,7 +123,7 @@ enum ConfigGenerator {
         let mandatoryNames = Set(MANDATORY_RULE_PROVIDERS.map(\.provider.name))
         // 内置强制规则集的名字被占用时以内置为准，避免用户建同名条目把它顶掉
         let ruleProviders = data.ruleProviders.filter {
-            $0.enabled && !$0.name.isEmpty && !$0.url.isEmpty && !mandatoryNames.contains($0.name)
+            $0.enabled && !$0.name.isEmpty && !$0.url.isEmpty && !mandatoryNames.contains($0.name) && $0.name != "__MIDOG_FOCUS"
         }
 
         // ---- proxy-groups ----
@@ -164,8 +164,15 @@ enum ConfigGenerator {
         // 内置强制规则集不来自 data.json，每次生成都会重新写入
         seedMandatoryCaches(into: ruleProvidersDir)
         let emittedProviders = MANDATORY_RULE_PROVIDERS.map(\.provider) + ruleProviders
-        if !emittedProviders.isEmpty {
+        if !emittedProviders.isEmpty || focusRulesFile != nil {
             lines.append("rule-providers:")
+            if let focusRulesFile {
+                let fields: JSONValue = .object([
+                    "type": .string("file"), "behavior": .string("domain"),
+                    "format": .string("text"), "path": .string(focusRulesFile.path)
+                ])
+                lines.append("  __MIDOG_FOCUS: \(fields.jsonString)")
+            }
             for rp in emittedProviders {
                 let behavior = RULE_BEHAVIORS.contains(rp.behavior) ? rp.behavior : "classical"
                 let format = RULE_FORMATS.contains(rp.format) ? rp.format : "yaml"
@@ -195,6 +202,7 @@ enum ConfigGenerator {
         var userRules: [String] = MANDATORY_RULE_PROVIDERS.map {
             "RULE-SET,\($0.provider.name),\(normalizedRuleTarget($0.provider.target) ?? "REJECT")"
         }
+        if focusRulesFile != nil { userRules.append("RULE-SET,__MIDOG_FOCUS,REJECT") }
         for rule in rules {
             let trimmed = rule.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }

@@ -23,12 +23,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private let statusMenu = NSMenu()
     private var isQuitting = false
+    private var focusTimer: Timer?
+    private var focusMenuItem: NSMenuItem?
     private weak var mainWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureApplicationIcon()
         configureStatusItem()
         ContentFilterInstaller.shared.install()
+        FocusStore.shared.startPolling()
+        focusTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateFocusStatus() }
+        }
 
         NotificationCenter.default.addObserver(
             self,
@@ -37,9 +43,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
+        let workspaceNotifications = NSWorkspace.shared.notificationCenter
+        workspaceNotifications.addObserver(self, selector: #selector(systemWillSleep(_:)),
+                                           name: NSWorkspace.willSleepNotification, object: nil)
+        workspaceNotifications.addObserver(self, selector: #selector(systemDidWake(_:)),
+                                           name: NSWorkspace.didWakeNotification, object: nil)
+
         Task { @MainActor [weak self] in
             self?.registerExistingWindows()
         }
+    }
+
+    @objc private func systemWillSleep(_ notification: Notification) {
+        Store.shared.systemWillSleep()
+    }
+
+    @objc private func systemDidWake(_ notification: Notification) {
+        Store.shared.systemDidWake()
     }
 
     private func configureApplicationIcon() {
@@ -77,9 +97,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         statusMenu.addItem(withTitle: "显示窗口", action: #selector(showMainWindowFromMenu), keyEquivalent: "")
+        let focusItem = NSMenuItem(title: "专注模式未开始", action: #selector(showMainWindowFromMenu), keyEquivalent: "")
+        focusMenuItem = focusItem
+        statusMenu.addItem(focusItem)
         statusMenu.addItem(.separator())
         statusMenu.addItem(withTitle: "退出", action: #selector(quitApplication), keyEquivalent: "q")
         statusMenu.items.forEach { $0.target = self }
+    }
+
+    private func updateFocusStatus() {
+        let focus = FocusStore.shared
+        statusItem?.length = focus.active ? NSStatusItem.variableLength : NSStatusItem.squareLength
+        statusItem?.button?.imagePosition = focus.active ? .imageLeading : .imageOnly
+        statusItem?.button?.title = focus.active ? " " + focus.remaining : ""
+        statusItem?.button?.toolTip = focus.active ? "专注中 · " + focus.remaining : "midog"
+        focusMenuItem?.title = focus.active ? "专注剩余 " + focus.remaining : "专注模式未开始"
     }
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
