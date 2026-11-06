@@ -1,5 +1,8 @@
 """No root or installation: signals are restricted to temporary fixture executables."""
 from pathlib import Path
+import os
+import sys
+import time
 import plistlib
 import shutil
 import signal
@@ -22,7 +25,7 @@ with tempfile.TemporaryDirectory(prefix="midog-watchdog-test-") as tmp:
     rows = [line.split("\t") for line in catalog.splitlines()]
     assert len(rows) >= 50
     assert len({(r[1], r[2]) for r in rows}) == len(rows)
-    assert all(len(r) == 4 and r[3].startswith(("https://github.com/", "legacy:b7e5e48:")) for r in rows)
+    assert all(len(r) == 4 and r[3].startswith(("https://github.com/", "https://www.proxifier.com/", "legacy:b7e5e48:")) for r in rows)
     for args in [["--check", "/tmp/override"], ["--dry-run", "/tmp/override"], ["--list", "/tmp/override"]]:
         assert subprocess.run([binary, *args], capture_output=True).returncode == 2
 
@@ -57,9 +60,10 @@ int main(int argc, char **argv) {
         }
         clear_cache(); return 0;
     }
-    if (argc != 2) return 2;
+    if (argc != 2 && argc != 3) return 2;
     fixture_root = argv[1];
-    return monitor(false);
+    if (argc == 3) { char *args[] = {argv[0], argv[2]}; return watchdog_main(2, args); }
+    return monitor(false, getppid());
 }
 '''.replace('\\"', '"'))
     runner = tmp / "runner"
@@ -94,6 +98,7 @@ int main(int argc, char **argv) {
         match(app("Own.app", "com.xx.midog", "mihomo"), False)
         match(app("Own.systemextension", "com.xx.midog.filter", "mihomo"), False)
         match(app("Renamed.systemextension", "io.nekohasekai.sfamt.system"), True)
+        match(app("Proxy.systemextension", "com.initex.proxifier.v3.macos.ProxifierExtension"), True)
         match(app("Nested.app", "app.hiddify.com", "Helper.app/Contents/MacOS/unknown"), True)
         path = app("Changed.app", "org.example.unknown")
         match(path, False)
@@ -146,7 +151,7 @@ int main(int argc, char **argv) {
         assert f"{moved.pid}\t{relocated}" in output
         assert str(neighbor) not in output and str(own) not in output
         assert all(p.poll() is None for p in children)
-        daemon = subprocess.Popen([runner, tmp])
+        daemon = subprocess.Popen([runner, tmp, "--user-monitor"])
         assert ordinary.wait(timeout=7) == -signal.SIGTERM
         assert moved.wait(timeout=7) == -signal.SIGTERM
         stubborn = spawn(target, True)
@@ -169,3 +174,23 @@ int main(int argc, char **argv) {
             p.stdout.close()
     print(f"Passed: {len(rows)} built-in identities, relocation, bundle rename, Homebrew, cache invalidation, "
           "self exclusion, immutable catalogue, TERM/KILL, restart and dry run")
+
+    # App-owned monitor must leave when its parent exits, even without SIGTERM.
+    parent = subprocess.Popen([sys.executable, "-c",
+        "import subprocess,sys; p=subprocess.Popen(sys.argv[1:],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); print(p.pid,flush=True); sys.stdin.readline()",
+        str(runner), str(tmp), "--user-monitor"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    child_pid = int(parent.stdout.readline())
+    time.sleep(0.2)
+    parent.stdin.close()
+    parent.wait(timeout=3)
+    try:
+        for _ in range(60):
+            state = subprocess.run(["ps", "-o", "stat=", "-p", str(child_pid)], capture_output=True, text=True).stdout.strip()
+            if not state or state.startswith("Z"): break
+            time.sleep(0.1)
+        else: raise AssertionError("App monitor survived parent exit")
+    finally:
+        try: os.kill(child_pid, signal.SIGTERM)
+        except ProcessLookupError: pass
+        parent.stdout.close()
+    print("Passed: user monitor stops when its parent exits")

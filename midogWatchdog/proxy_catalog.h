@@ -6,6 +6,9 @@
 enum rule_kind { RULE_EXECUTABLE, RULE_BUNDLE };
 struct proxy_rule { enum rule_kind kind; const char *value, *project, *source; };
 static const struct proxy_rule catalog[] = {
+    // Verified against the signed Proxifier 3.15.0 app (Team NXELXU5YLW), 2026-11-04.
+    {RULE_BUNDLE, "com.initex.proxifier.v3.macos", "Proxifier", "https://www.proxifier.com/download/index.html"},
+    {RULE_BUNDLE, "com.initex.proxifier.v3.macos.ProxifierExtension", "Proxifier", "https://www.proxifier.com/download/index.html"},
     {RULE_EXECUTABLE, "verge-mihomo", "Clash Verge Rev", "https://github.com/clash-verge-rev/clash-verge-rev/blob/dev/src-tauri/tauri.conf.json"},
     {RULE_EXECUTABLE, "verge-mihomo-alpha", "Clash Verge Rev", "https://github.com/clash-verge-rev/clash-verge-rev/blob/dev/src-tauri/tauri.conf.json"},
     {RULE_BUNDLE, "io.github.clash-verge-rev.clash-verge-rev", "Clash Verge Rev", "https://github.com/clash-verge-rev/clash-verge-rev/blob/dev/src-tauri/tauri.conf.json"},

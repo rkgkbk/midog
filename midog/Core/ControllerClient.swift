@@ -1,6 +1,6 @@
 import Foundation
 
-struct ProxyNode: Decodable {
+struct ProxyNode: Decodable, Equatable {
     var name: String?
     var type: String?
     var now: String?
@@ -17,7 +17,7 @@ struct ProxyNode: Decodable {
     }
 }
 
-struct RuleProviderRuntime: Decodable {
+struct RuleProviderRuntime: Decodable, Equatable {
     var ruleCount: Int?
     var updatedAt: String?
 }

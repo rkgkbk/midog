@@ -1,11 +1,11 @@
 import Foundation
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
 
 struct SourcesView: View {
     @EnvironmentObject var store: Store
     @State private var showAddSubscription = false
+    @State private var showClientScan = false
     @State private var deletingSource: Source?
 
     var body: some View {
@@ -15,7 +15,8 @@ struct SourcesView: View {
                     HStack {
                         SectionTitle("节点来源 · 订阅与本地文件")
                         Spacer()
-                        MiniButton(title: "导入 YAML 文件…") { importFiles() }
+                        MiniButton(title: "扫描客户端订阅") { showClientScan = true }
+                        MiniButton(title: "导入配置文件…") { importFiles() }
                         AccentButton(title: "添加订阅") { showAddSubscription = true }
                     }
 
@@ -52,6 +53,9 @@ struct SourcesView: View {
         }
         .sheet(isPresented: $showAddSubscription) {
             AddSubscriptionSheet()
+        }
+        .sheet(isPresented: $showClientScan) {
+            ClientSubscriptionScanSheet()
         }
         .confirmationDialog("确定删除节点来源 \(deletingSource?.displayName ?? "")？（配置文件将一并删除）",
                             isPresented: Binding(get: { deletingSource != nil },
@@ -121,9 +125,7 @@ struct SourcesView: View {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
-        panel.allowedContentTypes = [.yaml]
-        panel.allowsOtherFileTypes = true
-        panel.message = "选择 Clash 格式的 YAML 配置文件"
+        panel.message = "选择配置文件，不限文件名和扩展名；导入时会校验内容是否为 Clash 配置"
         if panel.runModal() == .OK {
             let urls = panel.urls
             Task {

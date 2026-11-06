@@ -6,9 +6,14 @@ import Security
 }
 
 nonisolated enum FocusIPC {
-    static let service = "group.com.xx.midog.focus"
+    // Separate generations so retiring an old extension cannot unregister the new listener.
+    static var service: String {
+        "group.com.xx.midog.focus." + (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0")
+    }
     static let directory = URL(fileURLWithPath: "/Library/Application Support/midog-focus", isDirectory: true)
     static let rulesFile = directory.appendingPathComponent("domains.list")
+    static let adultRulesFile = directory.appendingPathComponent("adult.list")
+    static let adultProviderName = "__MIDOG_ADULT_BLOCK"
     static let providerName = "__MIDOG_FOCUS"
 
     /// Pin both ends to the same signing team. Ad-hoc builds are development only.

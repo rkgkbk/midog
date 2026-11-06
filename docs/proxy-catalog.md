@@ -2,7 +2,11 @@
 
 核对日期：2026-10-04。此目录针对 macOS 可运行的代理客户端及独立内核，不声称覆盖 GitHub 的全部项目或全部版本。
 
-规则直接编译在 `midogWatchdog/proxy_catalog.h`，设置页只读。应用 Bundle ID 与可执行文件名为精确匹配（区分大小写），不匹配安装目录，也不做名称子串匹配。Bundle ID 来自外层或嵌套应用、系统扩展的 Info.plist，因此移动或改名 App 仍可识别。独立内核移动目录后文件名不变也能识别。
+2026-11-04 补充 Proxifier 3.15.0：从本机安装包的主程序及内嵌系统扩展 `Info.plist` 核实 `com.initex.proxifier.v3.macos` 和 `com.initex.proxifier.v3.macos.ProxifierExtension`，签名 Team 为 `NXELXU5YLW`，通过 `codesign --verify --deep --strict` 检查。发行来源：[Proxifier 官方下载](https://www.proxifier.com/download/index.html)。两条 Bundle 规则同时覆盖原名及改名后的应用/扩展目录；未增加通用进程名规则。
+
+规则定义在 `midogWatchdog/proxy_catalog.h`，同时编译进 watchdog 和系统内容过滤扩展，设置页只读。两者共用 `proxy_match.h` 的匹配逻辑。扩展在新连接上通过系统提供的应用 / 进程 audit token 解析可执行文件路径，命中后直接拒绝连接，不依赖 watchdog 是否运行，也不依赖连接是否带有域名。watchdog 仍负责结束代理进程。
+
+更新需要安装并批准新版系统扩展；仅更新 watchdog 不会更新过滤扩展。过滤扩展本身必须保持启用。此检查针对新连接，不承诺接管更新前已经放行的连接；无法解析进程身份时仍继续原有域名过滤，不全局断网。应用 Bundle ID 与可执行文件名为精确匹配（区分大小写），不匹配安装目录，也不做名称子串匹配。Bundle ID 来自外层或嵌套应用、系统扩展的 Info.plist，因此移动或改名 App 仍可识别。独立内核移动目录后文件名不变也能识别。
 
 这些是身份线索，不是第三方签名验证。未收录项目、修改 Bundle ID 且重命名可执行文件的程序、脚本解释器承载的代理不保证识别。相同文件名的非代理自编译程序也会命中；因此不纳入 `core`、`client`、`node`、`python`、`ssh`、`curl` 等通用名称，也不把所有浏览器或 VPN 一并终止。系统受保护的进程可能无法终止，守护程序会记录失败。管理员仍能替换或卸载本服务。
 
@@ -51,9 +55,23 @@
 
 ## 上版兼容项
 
-另保留 `ClashX Pro`、`Surge`、`Shadowrocket` 三个精确可执行文件名，来源为本仓库提交 `b7e5e48` 的 `midog/Resources/proxies.list`。它们沿用上版覆盖范围，不计入本次核对的 33 组 GitHub 项目，也没有在本次新增未经核对的 Bundle ID。总计 61 条规则。可通过 `git show b7e5e48:midog/Resources/proxies.list` 追溯。
+另保留 `ClashX Pro`、`Surge`、`Shadowrocket` 三个精确可执行文件名，来源为本仓库提交 `b7e5e48` 的 `midog/Resources/proxies.list`。它们沿用上版覆盖范围，不计入本次核对的 33 组 GitHub 项目，也没有在本次新增未经核对的 Bundle ID。加上 Proxifier 后总计 63 条规则。可通过 `git show b7e5e48:midog/Resources/proxies.list` 追溯。
 
 ## 维护方法
+
+### 应用内监控
+
+midog 启动时运行随 App 打包的 `midog-watchdog --user-monitor`，与独立系统服务共用目录及 TERM/KILL 逻辑。每 3 秒检查当前用户的代理进程；关闭主窗口不停止，正常退出 App 会终止子进程，App 被强制结束后子进程检测到父进程消失也会退出。应用每 3 秒检查子进程、异常退出后重新启动，并查询独立系统 watchdog 状态。总览在系统监控未运行时显示警告及应用内兜底状态，设置页分别显示两层状态。
+
+应用内监控不注册新的开机后台项，不更改系统后台开关，不需要管理员授权，只能结束当前用户进程。独立 watchdog 后台项关闭时，只要 midog 仍运行，就有应用内兜底；退出 midog 且系统 watchdog 未运行后，不再有进程终止层，仍启用的网络扩展继续限制连接。root/其他用户进程不属于应用内监控覆盖范围。
+
+### 本机扩展更新与实测（2026-11-04）
+
+发现 App 内嵌扩展与系统安装扩展的临时签名哈希不同，但构建号均为 6。系统日志报告 `Rejecting agent com.xx.midog because it does not satisfy the code signature requirements`，过滤服务未启动，即使扩展开关已开启也不会拦截。构建号升级为 7，并在扩展激活完成后创建新的 `NEFilterProviderConfiguration`、保存过滤配置；本机更新后开始收到连接。
+
+验证时 watchdog 服务未加载，FlClash 及 FlClashCore 保持运行：通过 FlClash 的 `127.0.0.1:7890` 请求 `https://example.com` 和 `https://www.apple.com` 均未完成 TLS（curl 35、HTTP 000）；同样请求通过 midog 的 `127.0.0.1:7891` 均返回 HTTP 200。相同临时 TCP 测试程序以普通名称运行可连接 `1.1.1.1:443`，复制为名单中的 `FlClash` 名称后连接失败。测试未切换 FlClash 的 TUN 或系统代理开关，不代表已验证所有代理或模式。网络扩展限制联网，不阻止应用启动或创建代理配置；应用退出由 watchdog 执行。
+
+后续重新签名/发布时需递增 App 与扩展构建号，并完成系统扩展更新及过滤配置保存。`systemextensionsctl` 的 enabled 状态不能单独证明过滤服务已成功启动；应同时检查服务连通性及真实请求。
 
 新增规则前确认上游 macOS 构建产物或 Bundle ID，在头文件和本页记录来源，执行 `python3 tests/WatchdogCheck.py`，再重新构建并发布。运行时没有下载名单或读取外部名单的入口。已安装服务需点击「更新监控」替换二进制，旧版 `proxies.list` 会在更新成功后删除。
 

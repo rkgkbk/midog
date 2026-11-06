@@ -6,6 +6,8 @@ final class FocusAuthority: NSObject, FocusRemote, NSXPCListenerDelegate {
     private let listener = NSXPCListener(machServiceName: FocusIPC.service)
     private var timer: DispatchSourceTimer?
     private var state = FocusState()
+    private var wasActive = false
+    private var adultRules = ""
     private var storageError: String?
     private let persistence = FocusPersistence(directory: FocusIPC.directory)
     private let proxy = FocusProxySync()
@@ -22,23 +24,47 @@ final class FocusAuthority: NSObject, FocusRemote, NSXPCListenerDelegate {
             throw FocusFailure("专注数据目录必须由系统拥有且不可被其他用户写入")
         }
         // Do not silently replace a damaged active session with an empty one.
+        guard let url = Bundle.main.url(forResource: "category-porn", withExtension: "list") else {
+            throw FocusFailure("缺少内置过滤规则")
+        }
+        adultRules = try String(contentsOf: url, encoding: .utf8)
         state = try persistence.load()
-        try persistence.publish(state)
+        if state.restoreFilteringIfNeeded() { try persistence.save(state) }
+        try persistence.publish(state, adultRules: adultRules)
         try proxy.load()
+        wasActive = state.isActive()
         rulesChanged?(state)
         listener.delegate = self
         listener.setConnectionCodeSigningRequirement(try FocusIPC.requirement(identifier: "com.xx.midog"))
         listener.resume()
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: 2)
+        timer.schedule(wallDeadline: .now(), repeating: 2)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
-            do { try self.persistence.publish(self.state); self.storageError = nil }
+            let active = self.state.isActive()
+            if active != self.wasActive {
+                self.wasActive = active
+                self.rulesChanged?(self.state)
+            }
+            do {
+                try self.restoreFiltering()
+                try self.persistence.publish(self.state, adultRules: self.adultRules)
+                self.storageError = nil
+            }
             catch { self.storageError = error.localizedDescription }
             self.proxy.refresh(state: self.state)
         }
         self.timer = timer
         timer.resume()
+    }
+
+    private func restoreFiltering() throws {
+        var next = state
+        guard next.restoreFilteringIfNeeded() else { return }
+        // Restore in memory even if persistence fails; retry saving on the next tick.
+        rulesChanged?(next)
+        try persistence.save(next)
+        state = next
     }
 
     func stop() { timer?.cancel(); listener.invalidate() }
@@ -54,6 +80,7 @@ final class FocusAuthority: NSObject, FocusRemote, NSXPCListenerDelegate {
         queue.async {
             var failure: String?
             do {
+                try self.restoreFiltering()
                 let command = try JSONDecoder().decode(FocusCommand.self, from: request)
                 if command.action == .configureProxy {
                     try self.proxy.configure(controller: command.controller ?? "", secret: command.secret ?? "")
@@ -62,8 +89,9 @@ final class FocusAuthority: NSObject, FocusRemote, NSXPCListenerDelegate {
                     try next.apply(command)
                     try self.persistence.save(next)
                     self.state = next
+                    self.wasActive = next.isActive()
                     self.rulesChanged?(next)
-                    try self.persistence.publish(self.state)
+                    try self.persistence.publish(self.state, adultRules: self.adultRules)
                 }
                 self.proxy.refresh(state: self.state)
             } catch { failure = error.localizedDescription }

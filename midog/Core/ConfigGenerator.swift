@@ -50,6 +50,10 @@ enum ConfigGenerator {
         fileName.replacingOccurrences(of: "\\.(yaml|yml)$", with: "", options: [.regularExpression, .caseInsensitive])
     }
 
+    static func autoProviderName(for fileName: String) -> String {
+        "__MIDOG_AUTO_" + providerName(for: fileName)
+    }
+
     /// provider 中的节点不能直接作为规则目标；为每个选定节点生成一个隐藏的单节点组。
     static func ruleNodeGroupName(for ruleProviderName: String) -> String {
         "__MIDOG_RULE_NODE_\(ruleProviderName)"
@@ -60,7 +64,7 @@ enum ConfigGenerator {
         var providers: [String]
     }
 
-    static func generate(data: AppData, rules: [String], configsDir: URL, ruleProvidersDir: URL, focusRulesFile: URL? = nil) -> Result<Output, SubscriptionParser.ParseError> {
+    static func generate(data: AppData, rules: [String], configsDir: URL, ruleProvidersDir: URL, focusRulesFile: URL? = nil, filteringEnabled: Bool = true, adultRulesFile: URL? = nil) -> Result<Output, SubscriptionParser.ParseError> {
         let fm = FileManager.default
         let enabledSources = data.sources.filter {
             $0.enabled && fm.fileExists(atPath: configsDir.appendingPathComponent($0.name).path)
@@ -102,21 +106,22 @@ enum ConfigGenerator {
 
         // ---- proxy-providers：每个启用的来源一个 file provider ----
         var providerNames: [String] = []
+        var autoProviderNames: [String] = []
         lines.append("proxy-providers:")
         for src in enabledSources {
             let pname = providerName(for: src.name)
             providerNames.append(pname)
-            let fields: [String: JSONValue] = [
+            var fields: [String: JSONValue] = [
                 "type": .string("file"),
                 "path": .string(configsDir.appendingPathComponent(src.name).path),
-                "health-check": .object([
-                    "enable": .bool(true),
-                    "url": .string(HEALTH_CHECK_URL),
-                    "interval": .number(300),
-                    "lazy": .bool(true)
-                ])
+                "health-check": .object(["enable": .bool(false)])
             ]
             lines.append("  \(JSONValue.escape(pname)): \(JSONValue.object(fields).jsonString)")
+            // AUTO 使用独立 provider，手动节点的流量不会唤醒它的定时检查。
+            let autoName = autoProviderName(for: src.name)
+            autoProviderNames.append(autoName)
+            fields["health-check"] = .object(["enable": .bool(false), "lazy": .bool(true)])
+            lines.append("  \(JSONValue.escape(autoName)): \(JSONValue.object(fields).jsonString)")
         }
         lines.append("")
 
@@ -132,7 +137,7 @@ enum ConfigGenerator {
             "name": .string("PROXY"),
             "type": .string("select"),
             "proxies": .array([.string("AUTO"), .string("DIRECT")]),
-            "include-all-providers": .bool(true)
+            "use": .array(providerNames.map { .string($0) })
         ])
         let autoGroup: JSONValue = .object([
             "name": .string("AUTO"),
@@ -140,7 +145,8 @@ enum ConfigGenerator {
             "url": .string(HEALTH_CHECK_URL),
             "interval": .number(300),
             "tolerance": .number(50),
-            "include-all-providers": .bool(true)
+            "use": .array(autoProviderNames.map { .string($0) }),
+            "lazy": .bool(true)
         ])
         lines.append("  - \(proxyGroup.jsonString)")
         lines.append("  - \(autoGroup.jsonString)")
@@ -150,7 +156,7 @@ enum ConfigGenerator {
             let nodeGroup: JSONValue = .object([
                 "name": .string(ruleNodeGroupName(for: rp.name)),
                 "type": .string("select"),
-                "include-all-providers": .bool(true),
+                "use": .array(providerNames.map { .string($0) }),
                 "filter": .string(exactNodePattern),
                 "default-selected": .string(node),
                 "empty-fallback": .string("REJECT"),
@@ -163,7 +169,7 @@ enum ConfigGenerator {
         // ---- rule-providers（远程规则集）----
         // 内置强制规则集不来自 data.json，每次生成都会重新写入
         seedMandatoryCaches(into: ruleProvidersDir)
-        let emittedProviders = MANDATORY_RULE_PROVIDERS.map(\.provider) + ruleProviders
+        let emittedProviders = (filteringEnabled || adultRulesFile != nil ? MANDATORY_RULE_PROVIDERS.map(\.provider) : []) + ruleProviders
         if !emittedProviders.isEmpty || focusRulesFile != nil {
             lines.append("rule-providers:")
             if let focusRulesFile {
@@ -176,7 +182,8 @@ enum ConfigGenerator {
             for rp in emittedProviders {
                 let behavior = RULE_BEHAVIORS.contains(rp.behavior) ? rp.behavior : "classical"
                 let format = RULE_FORMATS.contains(rp.format) ? rp.format : "yaml"
-                let cachePath = ruleProvidersDir.appendingPathComponent(rp.name + rp.fileExtension).path
+                let cachePath = (rp.name == "__MIDOG_ADULT_BLOCK" ? adultRulesFile : nil)?.path
+                    ?? ruleProvidersDir.appendingPathComponent(rp.name + rp.fileExtension).path
                 var fields: [String: JSONValue] = [
                     "behavior": .string(behavior),
                     "format": .string(format),
@@ -199,7 +206,7 @@ enum ConfigGenerator {
         // ---- rules ----
         let finalTarget = FINAL_TARGETS.contains(data.finalTarget) ? data.finalTarget : "PROXY"
         // 内置强制规则排在最前，用户规则无法在它之前插队放行
-        var userRules: [String] = MANDATORY_RULE_PROVIDERS.map {
+        var userRules: [String] = (filteringEnabled || adultRulesFile != nil ? MANDATORY_RULE_PROVIDERS : []).map {
             "RULE-SET,\($0.provider.name),\(normalizedRuleTarget($0.provider.target) ?? "REJECT")"
         }
         if focusRulesFile != nil { userRules.append("RULE-SET,__MIDOG_FOCUS,REJECT") }

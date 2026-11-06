@@ -84,7 +84,8 @@ struct SettingsView: View {
             Text(store.contentFilterStatus)
                 .font(.system(size: 12.5))
                 .foregroundStyle(T.fg)
-            Text(focus.available ? "专注服务已连接" : "专注服务未连接")
+            filteringControls
+            Text(focus.available ? (focus.state.filteringEnabled ? "过滤已开启 · 专注服务已连接" : "过滤已关闭 · 专注服务已连接") : "专注服务未连接")
                 .font(.system(size: 12)).foregroundStyle(focus.available ? T.accent : T.warn)
             if let error = focus.error {
                 Text(error).font(.system(size: 12)).foregroundStyle(T.warn).textSelection(.enabled)
@@ -98,6 +99,41 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
+    }
+
+    private var filteringControls: some View {
+        HStack(spacing: 10) {
+            if !focus.state.filteringEnabled {
+                MiniButton(title: "开启过滤", disabled: !focus.available || focus.busy) {
+                    Task { await focus.perform(FocusCommand(action: .enableFiltering)) }
+                }
+                if let resumes = focus.state.filteringResumesAt {
+                    Text("将在 \(resumes, style: .time) 自动开启")
+                        .font(.system(size: 12)).foregroundStyle(T.muted)
+                }
+            } else if let requested = focus.state.disableRequestedAt,
+                      focus.now < requested.addingTimeInterval(FocusState.disableWait + FocusState.confirmationWindow) {
+                let wait = requested.addingTimeInterval(FocusState.disableWait).timeIntervalSince(focus.now)
+                if wait > 0 {
+                    Text("等待 \(Int(ceil(wait)) / 60) 分 \(Int(ceil(wait)) % 60) 秒后可确认关闭")
+                        .font(.system(size: 12)).foregroundStyle(T.muted)
+                } else {
+                    MiniButton(title: "确认关闭过滤", disabled: !focus.available || focus.busy) {
+                        Task { await focus.perform(FocusCommand(action: .confirmDisableFiltering)) }
+                    }
+                    Text("请在 \(Int(ceil(requested.addingTimeInterval(FocusState.disableWait + FocusState.confirmationWindow).timeIntervalSince(focus.now)))) 秒内确认")
+                        .font(.system(size: 12)).foregroundStyle(T.warn)
+                }
+            } else {
+                MiniButton(title: "关闭过滤", disabled: !focus.available || focus.busy) {
+                    Task { await focus.perform(FocusCommand(action: .requestDisableFiltering)) }
+                }
+                Text(focus.state.disableRequestedAt == nil
+                     ? "等待 15 分钟后，须在 1 分钟内确认关闭；关闭 1 小时后自动开启"
+                     : "确认已超时，过滤仍开启；可重新申请关闭")
+                    .font(.system(size: 11)).foregroundStyle(T.muted)
+            }
+        }
     }
 
     private var tunCard: some View {

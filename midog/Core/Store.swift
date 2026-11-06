@@ -53,6 +53,18 @@ struct PortHolder: Identifiable, Equatable, Sendable {
 }
 
 @MainActor
+final class RuntimeTelemetry: ObservableObject {
+    @Published var logs: [LogEntry] = []
+    @Published var upRate = 0
+    @Published var downRate = 0
+    @Published var upHistory: [Double] = []
+    @Published var downHistory: [Double] = []
+    @Published var connCount = 0
+    @Published var totalUp = 0
+    @Published var totalDown = 0
+}
+
+@MainActor
 final class Store: ObservableObject {
     static let shared = Store()
 
@@ -74,14 +86,8 @@ final class Store: ObservableObject {
     @Published var tunActive = false
     private var tunMissingSince: Date?
     @Published var privileged = false
-    @Published var logs: [LogEntry] = []
-    @Published var upRate = 0
-    @Published var downRate = 0
-    @Published var upHistory: [Double] = []
-    @Published var downHistory: [Double] = []
-    @Published var connCount = 0
-    @Published var totalUp = 0
-    @Published var totalDown = 0
+    let telemetry = RuntimeTelemetry()
+    private var windowVisible = false
     @Published var ruleRuntime: [String: RuleProviderRuntime] = [:]
     /// 本次启动已自动恢复过的内置规则集，避免重载失败时死循环
     private var lastIntegrityRepair: Date?
@@ -102,8 +108,6 @@ final class Store: ObservableObject {
     private let maxLogs = 100
     private var pendingLogs = LogBuffer<LogEntry>(capacity: 100)
     private var logFlushTask: Task<Void, Never>?
-    private let currentRouteDelayRefreshInterval: TimeInterval = 300
-    private var lastAutoDelayTestAt: [String: Date] = [:]
 
     var client: ControllerClient {
         ControllerClient(controller: data.externalController, secret: data.secret)
@@ -182,7 +186,10 @@ final class Store: ObservableObject {
         switch ConfigGenerator.generate(data: data, rules: rules,
                                         configsDir: AppPaths.configsDir,
                                         ruleProvidersDir: AppPaths.ruleProvidersDir,
-                                        focusRulesFile: focusFile) {
+                                        focusRulesFile: focusFile,
+                                        filteringEnabled: FocusStore.shared.state.isFilteringEnabled(),
+                                        adultRulesFile: focusSupported && FileManager.default.fileExists(atPath: FocusIPC.adultRulesFile.path)
+                                            ? FocusIPC.adultRulesFile : nil) {
         case .success(let output):
             do {
                 try output.yaml.write(to: AppPaths.outputConfig, atomically: true, encoding: .utf8)
@@ -407,9 +414,9 @@ final class Store: ObservableObject {
         stopTrafficStream()
         stopLogStream()
         proxies = [:]
-        connCount = 0
-        upRate = 0
-        downRate = 0
+        telemetry.connCount = 0
+        telemetry.upRate = 0
+        telemetry.downRate = 0
         toast("内核已停止")
     }
 
@@ -536,14 +543,31 @@ final class Store: ObservableObject {
 
     private func appendLog(_ level: LogEntry.Level, _ message: String) {
         pendingLogs.append(LogEntry(date: Date(), level: level, message: message))
-        guard logFlushTask == nil else { return }
-        // Publishing every line invalidates the entire Store-backed UI. Bound updates
-        // to twice a second, even when a resumed stream delivers a large backlog.
+        guard windowVisible, logFlushTask == nil else { return }
+        // Bound visible log updates to twice a second, including resumed stream backlogs.
         logFlushTask = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
             guard let self else { return }
             self.logFlushTask = nil
-            self.logs = Array((self.logs + self.pendingLogs.drain()).suffix(self.maxLogs))
+            self.flushLogs()
+        }
+    }
+
+    private func flushLogs() {
+        guard windowVisible, pendingLogs.count > 0 else { return }
+        telemetry.logs = Array((telemetry.logs + pendingLogs.drain()).suffix(maxLogs))
+    }
+
+    func setWindowVisible(_ visible: Bool) {
+        guard windowVisible != visible else { return }
+        windowVisible = visible
+        if visible {
+            flushLogs()
+            if connected { startTrafficStream() }
+        } else {
+            stopTrafficStream()
+            logFlushTask?.cancel()
+            logFlushTask = nil
         }
     }
 
@@ -551,7 +575,7 @@ final class Store: ObservableObject {
         logFlushTask?.cancel()
         logFlushTask = nil
         _ = pendingLogs.drain()
-        logs = []
+        telemetry.logs = []
     }
 
     // ============ 模式 / TUN ============
@@ -734,6 +758,7 @@ final class Store: ObservableObject {
             if source.enabled && running {
                 do {
                     try await client.refreshProxyProvider(ConfigGenerator.providerName(for: source.name))
+                    try await client.refreshProxyProvider(ConfigGenerator.autoProviderName(for: source.name))
                     note = "，节点已刷新"
                 } catch {
                     note = await applyChanges().note
@@ -779,21 +804,21 @@ final class Store: ObservableObject {
         }
     }
 
-    func importLocalFile(from url: URL) async {
+    func importLocalFile(from url: URL, name: String? = nil) async {
         do {
             let content = try String(contentsOf: url, encoding: .utf8)
             switch SubscriptionParser.parse(content) {
             case .failure(let err):
                 toast("导入失败: \(err.localizedDescription)", error: true)
             case .success(let parsed):
-                let fileName = SubscriptionParser.sanitizeFileName(url.lastPathComponent)
+                let fileName = SubscriptionParser.sanitizeFileName(name ?? url.lastPathComponent)
                 try parsed.content.write(to: AppPaths.configsDir.appendingPathComponent(fileName),
                                          atomically: true, encoding: .utf8)
                 if let idx = data.sources.firstIndex(where: { $0.name == fileName }) {
                     data.sources[idx].updatedAt = isoNow()
                 } else {
                     let noneEnabled = !data.sources.contains { $0.enabled }
-                    data.sources.append(Source(name: fileName, displayName: url.lastPathComponent,
+                    data.sources.append(Source(name: fileName, displayName: name ?? url.lastPathComponent,
                                                url: nil, format: "local", updatedAt: isoNow(),
                                                enabled: noneEnabled))
                 }
@@ -1178,7 +1203,7 @@ final class Store: ObservableObject {
             return
         }
         if let runtime = try? await client.ruleProvidersRuntime() {
-            ruleRuntime = runtime
+            if ruleRuntime != runtime { ruleRuntime = runtime }
         }
         await enforceRuntimeIntegrity()
     }
@@ -1189,7 +1214,7 @@ final class Store: ObservableObject {
     /// 仍可构造一份"看起来一样"的配置，彻底防住需要 root 守护进程持有密钥。
     private func enforceRuntimeIntegrity() async {
         guard running, let runtime = try? await client.ruleProvidersRuntime() else { return }
-        ruleRuntime = runtime
+        if ruleRuntime != runtime { ruleRuntime = runtime }
         var reasons: [String] = []
         for item in MANDATORY_RULE_PROVIDERS {
             let name = item.provider.name
@@ -1198,12 +1223,12 @@ final class Store: ObservableObject {
                 reasons.append("\(name) 缓存文件被改动")
             }
             let count = runtime[name]?.ruleCount ?? 0
-            if count < item.minimumRuleCount {
+            if FocusStore.shared.state.isFilteringEnabled(), count < item.minimumRuleCount {
                 reasons.append("\(name) 只加载到 \(count) 条")
             }
         }
         let expectedFirst = MANDATORY_RULE_PROVIDERS.first.map { "RuleSet,\($0.provider.name),REJECT" }
-        if let expectedFirst, let first = try? await client.firstRule(), first != expectedFirst {
+        if FocusStore.shared.state.isFilteringEnabled(), let expectedFirst, let first = try? await client.firstRule(), first != expectedFirst {
             reasons.append("第一条规则变成了 \(first)")
         }
         let rulesChanged = !reasons.isEmpty
@@ -1285,7 +1310,8 @@ final class Store: ObservableObject {
             return
         }
         do {
-            proxies = try await client.proxies()
+            let latest = try await client.proxies()
+            if proxies != latest { proxies = latest }
             if !connected {
                 connected = true
                 if let v = try? await client.version() { coreVersion = v }
@@ -1448,10 +1474,13 @@ final class Store: ObservableObject {
                 stopLogStream()
             }
         }
-        pid = servicePID
-        running = servicePID != nil
-        privileged = CoreService.installed
-        tunActive = await Self.tunInterfaceActive()
+        if pid != servicePID { pid = servicePID }
+        let isRunning = servicePID != nil
+        if running != isRunning { running = isRunning }
+        let installed = CoreService.installed
+        if privileged != installed { privileged = installed }
+        let active = await Self.tunInterfaceActive()
+        if tunActive != active { tunActive = active }
         if running && data.tunEnabled && privileged && !tunActive {
             if tunMissingSince == nil { tunMissingSince = Date() }
         } else {
@@ -1461,14 +1490,13 @@ final class Store: ObservableObject {
         if connected {
             await enforceLockedMode()
             await enforceRuntimeIntegrity()
-            if let snapshot = try? await client.connections() {
-                connCount = snapshot.count
-                totalUp = snapshot.uploadTotal
-                totalDown = snapshot.downloadTotal
+            if windowVisible, let snapshot = try? await client.connections() {
+                telemetry.connCount = snapshot.count
+                telemetry.totalUp = snapshot.uploadTotal
+                telemetry.totalDown = snapshot.downloadTotal
             }
-            scheduleCurrentRouteDelayTestIfNeeded()
         } else {
-            connCount = 0
+            telemetry.connCount = 0
         }
     }
 
@@ -1490,29 +1518,6 @@ final class Store: ObservableObject {
         }
     }
 
-    private func scheduleCurrentRouteDelayTestIfNeeded() {
-        guard let name = currentProxyName else { return }
-        if delays[name] == .testing { return }
-
-        let now = Date()
-        let shouldTest: Bool
-        if delays[name] == nil {
-            shouldTest = true
-        } else if let last = lastAutoDelayTestAt[name] {
-            shouldTest = now.timeIntervalSince(last) >= currentRouteDelayRefreshInterval
-        } else {
-            lastAutoDelayTestAt[name] = now
-            shouldTest = false
-        }
-
-        guard shouldTest else { return }
-        lastAutoDelayTestAt[name] = now
-        delays[name] = .testing
-        Task { [weak self] in
-            await self?.testDelay(name)
-        }
-    }
-
     func systemWillSleep() {
         systemSleeping = true
         stopTrafficStream()
@@ -1528,7 +1533,7 @@ final class Store: ObservableObject {
     }
 
     private func startTrafficStream() {
-        guard !systemSleeping, trafficTask == nil else { return }
+        guard windowVisible, !systemSleeping, trafficTask == nil else { return }
         let session = URLSession(configuration: .ephemeral)
         trafficSession = session
         let client = self.client
@@ -1543,12 +1548,12 @@ final class Store: ObservableObject {
                     let down = (obj["down"] as? Int) ?? 0
                     await MainActor.run {
                         guard let self, self.trafficSession === session, !self.systemSleeping else { return }
-                        self.upRate = up
-                        self.downRate = down
-                        self.upHistory.append(Double(up))
-                        self.downHistory.append(Double(down))
-                        if self.upHistory.count > 60 { self.upHistory.removeFirst() }
-                        if self.downHistory.count > 60 { self.downHistory.removeFirst() }
+                        self.telemetry.upRate = up
+                        self.telemetry.downRate = down
+                        self.telemetry.upHistory.append(Double(up))
+                        self.telemetry.downHistory.append(Double(down))
+                        if self.telemetry.upHistory.count > 60 { self.telemetry.upHistory.removeFirst() }
+                        if self.telemetry.downHistory.count > 60 { self.telemetry.downHistory.removeFirst() }
                     }
                 }
             } catch { /* 连接断开由轮询重建 */ }
@@ -1557,8 +1562,8 @@ final class Store: ObservableObject {
                 guard let self, self.trafficSession === session else { return }
                 self.trafficSession = nil
                 self.trafficTask = nil
-                self.upRate = 0
-                self.downRate = 0
+                self.telemetry.upRate = 0
+                self.telemetry.downRate = 0
             }
         }
     }
@@ -1568,10 +1573,10 @@ final class Store: ObservableObject {
         trafficSession = nil
         trafficTask?.cancel()
         trafficTask = nil
-        upRate = 0
-        downRate = 0
-        upHistory = []
-        downHistory = []
+        telemetry.upRate = 0
+        telemetry.downRate = 0
+        telemetry.upHistory = []
+        telemetry.downHistory = []
     }
 
     private func startLogStream() {

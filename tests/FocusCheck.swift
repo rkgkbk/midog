@@ -8,6 +8,44 @@ enum FocusCheck {
 
     static func main() throws {
         let now = Date(timeIntervalSince1970: 1_900_000_000)
+        let legacyFiltering = try JSONDecoder().decode(FocusState.self, from: Data("{\"domains\":[]}".utf8))
+        assert(legacyFiltering.filteringEnabled && legacyFiltering.disableRequestedAt == nil)
+        var filtering = FocusState()
+        try filtering.apply(FocusCommand(action: .add, domain: "example.com"), at: now)
+        try filtering.apply(FocusCommand(action: .start, minutes: 120), at: now)
+        rejects { try filtering.apply(FocusCommand(action: .confirmDisableFiltering), at: now) }
+        try filtering.apply(FocusCommand(action: .requestDisableFiltering), at: now)
+        rejects { try filtering.apply(FocusCommand(action: .requestDisableFiltering), at: now.addingTimeInterval(30)) }
+        rejects { try filtering.apply(FocusCommand(action: .confirmDisableFiltering), at: now.addingTimeInterval(899.999)) }
+        assert(filtering.blocks("example.com", at: now.addingTimeInterval(900)))
+        let pending = try JSONDecoder().decode(FocusState.self, from: JSONEncoder().encode(filtering))
+        assert(pending == filtering)
+        var timeout = pending
+        rejects { try timeout.apply(FocusCommand(action: .confirmDisableFiltering), at: now.addingTimeInterval(960)) }
+        assert(timeout.filteringEnabled)
+        try timeout.apply(FocusCommand(action: .requestDisableFiltering), at: now.addingTimeInterval(960))
+        rejects { try timeout.apply(FocusCommand(action: .confirmDisableFiltering), at: now.addingTimeInterval(961)) }
+        try filtering.apply(FocusCommand(action: .confirmDisableFiltering), at: now.addingTimeInterval(900))
+        assert(!filtering.filteringEnabled && !filtering.blocks("example.com", at: now.addingTimeInterval(901)))
+        assert(filtering.proxyRules == "midog-focus-empty.invalid\n")
+        let disabled = try JSONDecoder().decode(FocusState.self, from: JSONEncoder().encode(filtering))
+        assert(!disabled.filteringEnabled)
+        try filtering.apply(FocusCommand(action: .enableFiltering), at: now.addingTimeInterval(902))
+        assert(filtering.blocks("example.com", at: now.addingTimeInterval(902)))
+        var lastMoment = pending
+        try lastMoment.apply(FocusCommand(action: .confirmDisableFiltering), at: now.addingTimeInterval(959.999))
+        var resumed = disabled
+        assert(resumed.filteringResumesAt == now.addingTimeInterval(4500))
+        assert(!resumed.isFilteringEnabled(at: now.addingTimeInterval(4499.999)))
+        assert(!resumed.restoreFilteringIfNeeded(at: now.addingTimeInterval(4499.999)))
+        assert(resumed.isFilteringEnabled(at: now.addingTimeInterval(4500)))
+        assert(resumed.restoreFilteringIfNeeded(at: now.addingTimeInterval(4500)))
+        assert(resumed.filteringEnabled && resumed.filteringResumesAt == nil)
+        assert(resumed.blocks("example.com", at: now.addingTimeInterval(4500)))
+        assert(!resumed.restoreFilteringIfNeeded(at: now.addingTimeInterval(4501)))
+        var legacyDisabled = try JSONDecoder().decode(FocusState.self,
+            from: Data("{\"domains\":[],\"filteringEnabled\":false}".utf8))
+        assert(legacyDisabled.restoreFilteringIfNeeded(at: now))
         var state = FocusState()
         rejects { try state.apply(FocusCommand(action: .start, minutes: 25), at: now) }
         try state.apply(FocusCommand(action: .add, domain: " HTTPS://Example.COM/path?q=1 "), at: now)
@@ -49,6 +87,66 @@ enum FocusCheck {
         try restored.apply(FocusCommand(action: .start, minutes: 1), at: now.addingTimeInterval(5000))
         assert(restored.endsAt == now.addingTimeInterval(5060))
 
+        // Old persisted states migrate without losing the current manual session.
+        let legacy = try JSONDecoder().decode(FocusState.self, from: Data("{\"domains\":[\"example.com\"],\"endsAt\":900000000}".utf8))
+        assert(legacy.schedules.isEmpty && legacy.endsAt != nil)
+
+        let calendar = Calendar.current
+        func time(_ hour: Int, _ minute: Int = 0, day: Int = 18) -> Date {
+            calendar.date(from: DateComponents(year: 2026, month: 10, day: day, hour: hour, minute: minute))!
+        }
+        var planned = FocusState()
+        try planned.apply(FocusCommand(action: .add, domain: "example.com"), at: time(1))
+        let morning = FocusSchedule()
+        try planned.apply(FocusCommand(action: .saveSchedule, schedule: morning), at: time(1))
+        assert(!planned.isActive(at: time(5, 59)))
+        assert(planned.blocks("www.example.com", at: time(6)))
+        // No start event runs while asleep: reloading mid-window must still enforce the plan.
+        let afterSleep = try JSONDecoder().decode(FocusState.self, from: JSONEncoder().encode(planned))
+        assert(!afterSleep.isActive(at: time(5, 59)))
+        assert(afterSleep.blocks("example.com", at: time(8)))
+        assert(afterSleep.remaining(at: time(8)) == "4:00:00")
+        assert(!afterSleep.blocks("example.com", at: time(12)))
+        assert(planned.remaining(at: time(6)) == "6:00:00")
+        assert(planned.isActive(at: time(11, 59)))
+        assert(!planned.isActive(at: time(12)))
+        assert(planned.isActive(at: time(6, day: 19)))
+        assert(!planned.canEditSchedules(at: time(22, 59)))
+        assert(planned.canEditSchedules(at: time(23)))
+        assert(planned.canEditSchedules(at: time(23, 59)))
+        assert(!planned.canEditSchedules(at: time(0, day: 19)))
+        var changed = morning
+        changed.endMinute = 660
+        for hour in [0, 5, 6, 11, 12, 22] {
+            rejects { try planned.apply(FocusCommand(action: .saveSchedule, schedule: changed), at: time(hour)) }
+            rejects { try planned.apply(FocusCommand(action: .deleteSchedule, scheduleID: morning.id), at: time(hour)) }
+            rejects { try planned.apply(FocusCommand(action: .remove, domain: "example.com"), at: time(hour)) }
+        }
+        try planned.apply(FocusCommand(action: .saveSchedule, schedule: changed), at: time(23))
+        assert(planned.activeEnd(at: time(6)) == time(11))
+        try planned.apply(FocusCommand(action: .saveSchedule, schedule: morning), at: time(23))
+        // Overlapping plans and manual extensions cannot shorten the active restriction.
+        let afternoon = FocusSchedule(startMinute: 660, endMinute: 780)
+        try planned.apply(FocusCommand(action: .saveSchedule, schedule: afternoon), at: time(11))
+        assert(planned.activeEnd(at: time(11)) == time(13))
+        try planned.apply(FocusCommand(action: .extend, minutes: 60), at: time(11))
+        assert(planned.activeEnd(at: time(11)) == time(14))
+        rejects { try planned.apply(FocusCommand(action: .start, minutes: 1), at: time(11)) }
+        let planRestored = try JSONDecoder().decode(FocusState.self, from: JSONEncoder().encode(planned))
+        assert(planRestored == planned)
+        assert(planRestored.blocks("example.com", at: time(6, day: 19)))
+        assert(planRestored.isActive(at: time(13)))
+        assert(!planRestored.isActive(at: time(14)))
+        for invalid in [FocusSchedule(startMinute: -1), FocusSchedule(endMinute: 1440),
+                        FocusSchedule(startMinute: 720, endMinute: 720), FocusSchedule(startMinute: 780, endMinute: 720)] {
+            rejects { try planned.apply(FocusCommand(action: .saveSchedule, schedule: invalid), at: time(23)) }
+        }
+        try planned.apply(FocusCommand(action: .deleteSchedule, scheduleID: morning.id), at: time(23))
+        assert(planned.schedules == [afternoon])
+        try planned.apply(FocusCommand(action: .start, minutes: 60), at: time(23))
+        rejects { try planned.apply(FocusCommand(action: .deleteSchedule, scheduleID: afternoon.id), at: time(23)) }
+        rejects { try planned.apply(FocusCommand(action: .remove, domain: "example.com"), at: time(23)) }
+
         // User DIRECT rules and a colliding custom provider cannot override focus rules.
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -71,6 +169,10 @@ enum FocusCheck {
         try persistence.publish(expired)
         let expiredRules = try String(contentsOf: persistence.rulesFile, encoding: .utf8)
         assert(expiredRules == "midog-focus-empty.invalid\n")
+        try persistence.publish(disabled, adultRules: "+.adult.test\n")
+        assert((try? String(contentsOf: persistence.adultRulesFile, encoding: .utf8)) == "midog-filter-empty.invalid\n")
+        try persistence.publish(resumed, adultRules: "+.adult.test\n")
+        assert((try? String(contentsOf: persistence.adultRulesFile, encoding: .utf8)) == "+.adult.test\n")
         let stateFile = root.appendingPathComponent("state.json")
         try Data("broken".utf8).write(to: stateFile)
         rejects { _ = try persistence.load() }
@@ -86,6 +188,15 @@ enum FocusCheck {
         assert(output.contains("RULE-SET,__MIDOG_FOCUS,REJECT"))
         assert(!output.contains("https://example.com/fake"))
         assert(output.range(of: "RULE-SET,__MIDOG_FOCUS,REJECT")!.lowerBound < output.range(of: "DOMAIN-SUFFIX,other.test,DIRECT")!.lowerBound)
-        print("Focus checks passed: validation, locked mutations, extension, persistence, expiry, rule priority")
+        let unfiltered = try ConfigGenerator.generate(data: app, rules: [], configsDir: root,
+            ruleProvidersDir: root, filteringEnabled: false).get().yaml
+        for provider in MANDATORY_RULE_PROVIDERS {
+            assert(!unfiltered.contains("RULE-SET," + provider.provider.name + ",REJECT"))
+        }
+        let dynamic = try ConfigGenerator.generate(data: app, rules: [], configsDir: root,
+            ruleProvidersDir: root, filteringEnabled: false, adultRulesFile: persistence.adultRulesFile).get().yaml
+        assert(dynamic.contains(persistence.adultRulesFile.path))
+        assert(dynamic.contains("RULE-SET,__MIDOG_ADULT_BLOCK,REJECT"))
+        print("Focus checks passed: validation, locked mutations, extension, persistence, expiry, daily schedules, editing window, migration, rule priority")
     }
 }

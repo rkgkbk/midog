@@ -2,8 +2,8 @@ import SwiftUI
 
 struct WatchdogSettingsView: View {
     @EnvironmentObject var store: Store
+    @ObservedObject private var watchdog = AppWatchdog.shared
     @State private var catalog = ""
-    @State private var status = "正在查询…"
     @State private var busy = false
     @State private var installed = WatchdogService.installed
     @State private var loaded = false
@@ -19,10 +19,13 @@ struct WatchdogSettingsView: View {
                 MiniButton(title: busy ? "处理中…" : (installed ? "更新监控" : "启用监控"),
                            disabled: busy || !loaded) { apply() }
             }
-            Text(status).font(.system(size: 12.5)).foregroundStyle(T.fg)
+            Text("系统监控：\(watchdog.systemStatus)").font(.system(size: 12.5)).foregroundStyle(T.fg)
+            Text(watchdog.status).font(.system(size: 12.5)).foregroundStyle(T.fg)
+            Text("midog 运行时也会监控当前用户的代理进程，关窗口后继续执行；应用内监控异常退出会自动重启。系统后台项关闭后此层仍可工作，但退出 midog 后停止，无法结束 root 或其他用户的代理。")
+                .font(.system(size: 11)).foregroundStyle(T.muted)
             Text("独立轻量进程，由系统开机启动和自动恢复；退出 midog 或停止内核后仍生效。命中的代理先正常退出，3 秒后仍存活则强制结束。启用和更新需管理员授权，应用内不提供停用或卸载入口。")
                 .font(.system(size: 11)).foregroundStyle(T.muted)
-            Text("内置目录按应用标识和内核文件名识别，不受安装目录影响。目录随版本更新，不可编辑；不会联网下载规则。")
+            Text("系统内容过滤启用时，也会独立拒绝已识别第三方代理的新连接，不依赖本监控是否运行。内置目录按应用标识和内核文件名识别，随版本更新，不可编辑。")
                 .font(.system(size: 11)).foregroundStyle(T.muted)
             DisclosureGroup("查看此版本内置目录（只读）") {
                 ScrollView([.vertical, .horizontal]) {
@@ -58,7 +61,7 @@ struct WatchdogSettingsView: View {
     }
 
     private func refresh() async {
-        status = await Task.detached { WatchdogService.status() }.value
+        await watchdog.refreshStatus()
         installed = WatchdogService.installed
     }
 

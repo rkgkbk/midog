@@ -1,4 +1,67 @@
 import Foundation
+import Combine
+
+/// Runs only while the app is alive; the system daemon remains independently managed.
+@MainActor
+final class AppWatchdog: ObservableObject {
+    static let shared = AppWatchdog()
+    @Published private(set) var running = false
+    @Published private(set) var status = "应用内监控尚未启动"
+    @Published private(set) var systemStatus = "正在查询…"
+    private var process: Process?
+    private var task: Task<Void, Never>?
+
+    func start() {
+        guard task == nil else { return }
+        task = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.ensureRunning()
+                await self?.refreshStatus()
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            }
+        }
+    }
+
+    func refreshStatus() async {
+        let status = await Task.detached { WatchdogService.status() }.value
+        guard !Task.isCancelled else { return }
+        systemStatus = status
+    }
+
+    private func ensureRunning() {
+        if process?.isRunning == true { return }
+        running = false
+        let child = Process()
+        child.executableURL = WatchdogService.bundledBinary
+        child.arguments = ["--user-monitor"]
+        child.standardOutput = FileHandle.nullDevice
+        child.standardError = FileHandle.nullDevice
+        child.terminationHandler = { [weak self] finished in
+            Task { @MainActor [weak self] in
+                guard let self, self.process === finished else { return }
+                self.running = false
+                self.status = "应用内监控已退出，正在重试（\(finished.terminationStatus)）"
+            }
+        }
+        do {
+            try child.run()
+            process = child
+            running = true
+            status = "应用内监控运行中 · 每 3 秒检查"
+        } catch {
+            status = "应用内监控启动失败：\(error.localizedDescription)"
+        }
+    }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+        if process?.isRunning == true { process?.terminate() }
+        process = nil
+        running = false
+        status = "应用内监控已停止"
+    }
+}
 
 /// 独立于 UI 和代理内核的 launchd 系统服务。
 nonisolated enum WatchdogService {

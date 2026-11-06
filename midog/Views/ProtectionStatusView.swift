@@ -3,18 +3,20 @@ import SwiftUI
 /// Show live service reachability rather than treating installation as protection.
 struct ProtectionStatusView: View {
     @ObservedObject private var focus = FocusStore.shared
-    @State private var watchdogStatus = "正在查询…"
+    @ObservedObject private var watchdog = AppWatchdog.shared
     var openSettings: () -> Void
 
     var body: some View {
         HStack(spacing: 18) {
             statusItem(title: "App 屏蔽", icon: "app.badge.checkmark",
-                       detail: watchdogStatus,
-                       healthy: watchdogStatus.hasPrefix("监控运行中"))
+                       detail: watchdog.systemStatus.hasPrefix("监控运行中")
+                           ? watchdog.systemStatus
+                           : (watchdog.running ? "应用内监控中 · 系统监控未运行" : watchdog.status),
+                       healthy: watchdog.systemStatus.hasPrefix("监控运行中") && watchdog.running)
             Rectangle().fill(T.line).frame(width: 1, height: 30)
             statusItem(title: "系统扩展屏蔽", icon: "shield.lefthalf.filled",
-                       detail: focus.available ? "过滤服务已连接" : "过滤服务未连接",
-                       healthy: focus.available)
+                       detail: focus.available ? (focus.state.filteringEnabled ? "过滤已开启" : "过滤已关闭") : "过滤服务未连接",
+                       healthy: focus.available && focus.state.filteringEnabled)
             Button(action: openSettings) {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
@@ -27,14 +29,6 @@ struct ProtectionStatusView: View {
             .help("在设置中查看和管理屏蔽服务")
         }
         .card()
-        .task {
-            while !Task.isCancelled {
-                let status = await Task.detached { WatchdogService.status() }.value
-                guard !Task.isCancelled else { return }
-                if watchdogStatus != status { watchdogStatus = status }
-                do { try await Task.sleep(for: .seconds(5)) } catch { return }
-            }
-        }
     }
 
     private func statusItem(title: String, icon: String, detail: String, healthy: Bool) -> some View {

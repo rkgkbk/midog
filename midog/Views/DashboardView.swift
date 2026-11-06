@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject var store: Store
+    @ObservedObject private var telemetry = Store.shared.telemetry
     @Binding var page: Page
 
     var body: some View {
@@ -16,15 +17,15 @@ struct DashboardView: View {
 
                 // KPI 行
                 HStack(spacing: 14) {
-                    kpiCard(title: "下行", value: formatRate(store.downRate),
-                            sub: "累计 \(formatBytes(store.totalDown))",
-                            spark: store.downHistory, color: T.accent)
-                    kpiCard(title: "上行", value: formatRate(store.upRate),
-                            sub: "累计 \(formatBytes(store.totalUp))",
-                            spark: store.upHistory, color: T.warn)
+                    kpiCard(title: "下行", value: formatRate(telemetry.downRate),
+                            sub: "累计 \(formatBytes(telemetry.totalDown))",
+                            spark: telemetry.downHistory, color: T.accent)
+                    kpiCard(title: "上行", value: formatRate(telemetry.upRate),
+                            sub: "累计 \(formatBytes(telemetry.totalUp))",
+                            spark: telemetry.upHistory, color: T.warn)
                     VStack(alignment: .leading, spacing: 8) {
                         SectionTitle("活跃连接")
-                        Text("\(store.connCount)")
+                        Text("\(telemetry.connCount)")
                             .font(.system(size: 24, weight: .semibold, design: .rounded))
                             .monospacedDigit()
                             .foregroundStyle(T.fg)
@@ -143,7 +144,7 @@ struct DashboardView: View {
                 }
                 .buttonStyle(.plain)
             }
-            if store.logs.isEmpty {
+            if telemetry.logs.isEmpty {
                 Text("等待日志输出…")
                     .font(.system(size: 12))
                     .foregroundStyle(T.muted)
@@ -151,7 +152,7 @@ struct DashboardView: View {
                     .frame(maxWidth: .infinity)
             } else {
                 VStack(alignment: .leading, spacing: 5) {
-                    ForEach(store.logs.suffix(9).reversed()) { log in
+                    ForEach(telemetry.logs.suffix(9).reversed()) { log in
                         HStack(alignment: .top, spacing: 7) {
                             Text(log.level.rawValue.uppercased().prefix(4))
                                 .font(.system(size: 10, weight: .semibold, design: .monospaced))

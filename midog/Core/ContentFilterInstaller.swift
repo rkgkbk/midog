@@ -38,7 +38,8 @@ final class ContentFilterInstaller: NSObject, OSSystemExtensionRequestDelegate {
             do {
                 let manager = NEFilterManager.shared()
                 try await manager.loadFromPreferences()
-                let configuration = manager.providerConfiguration ?? NEFilterProviderConfiguration()
+                // Rebuild after replacement so a cached designated requirement cannot pin the old binary.
+                let configuration = NEFilterProviderConfiguration()
                 configuration.filterSockets = true
                 configuration.filterDataProviderBundleIdentifier = identifier
                 manager.providerConfiguration = configuration

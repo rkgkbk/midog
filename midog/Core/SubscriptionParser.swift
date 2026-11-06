@@ -4,7 +4,7 @@ import CryptoKit
 /// 订阅下载与 Clash YAML 识别/校验（移植自旧版 subscription-parser.js）
 enum SubscriptionParser {
 
-    static let userAgent = "Clash Verge Rev/2.0.0"
+    static let userAgent = "FlClash/v0.9.3 clash-verge Platform/macos"
     static let maxBodySize = 20 * 1024 * 1024
     static let downloadTimeout: TimeInterval = 30
 

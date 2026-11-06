@@ -32,6 +32,12 @@ final class FocusStore: ObservableObject {
         }
     }
 
+    func systemDidWake() async {
+        configuredProxy = nil
+        now = Date()
+        await refresh()
+    }
+
     func refresh() async {
         guard !refreshing, !busy else { return }
         let epoch = mutationEpoch
@@ -43,12 +49,13 @@ final class FocusStore: ObservableObject {
             guard manager.isEnabled else { throw FocusFailure("请先启用 macOS 系统内容过滤") }
             let reply = try await send(FocusCommand(action: .status))
             guard epoch == mutationEpoch, !busy else { return }
+            let filteringChanged = state.filteringEnabled != reply.state.filteringEnabled
             accept(reply, clearError: !available)
             available = true
             let store = Store.shared
             needsProxyUpgrade = CoreService.installed && !CoreService.supportsFocusRules
             let key = store.data.externalController + store.data.secret + String(needsProxyUpgrade)
-            if configuredProxy != key {
+            if configuredProxy != key || filteringChanged {
                 let result = try await send(FocusCommand(action: .configureProxy,
                                                          controller: store.data.externalController,
                                                          secret: store.data.secret))
@@ -74,7 +81,7 @@ final class FocusStore: ObservableObject {
         mutationEpoch += 1
         defer { busy = false }
         error = nil
-        if command.action == .start, CoreService.installed, !CoreService.supportsFocusRules {
+        if (command.action == .start || command.action == .saveSchedule), CoreService.installed, !CoreService.supportsFocusRules {
             error = "请先点击「更新代理支持」，完成一次内核服务更新后再开始专注"
             return false
         }
@@ -83,7 +90,8 @@ final class FocusStore: ObservableObject {
             accept(reply)
             available = true
             guard reply.error == nil else { return false }
-            if command.action == .start || command.action == .add {
+            if command.action == .start || command.action == .add || command.action == .saveSchedule
+                || command.action == .confirmDisableFiltering || command.action == .enableFiltering {
                 let store = Store.shared
                 if !store.data.sources.isEmpty {
                     let result = await store.applyChanges()

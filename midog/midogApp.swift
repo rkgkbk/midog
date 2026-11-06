@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureStatusItem()
         ContentFilterInstaller.shared.install()
         FocusStore.shared.startPolling()
+        AppWatchdog.shared.start()
         focusTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateFocusStatus() }
         }
@@ -60,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func systemDidWake(_ notification: Notification) {
         Store.shared.systemDidWake()
+        Task { await FocusStore.shared.systemDidWake() }
     }
 
     private func configureApplicationIcon() {
@@ -69,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        AppWatchdog.shared.stop()
         // 退出 UI 不再结束 launchd 服务。
         return .terminateNow
     }
@@ -144,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func registerMainWindow(_ window: NSWindow) {
         mainWindow = window
         configure(window)
+        updateWindowVisibility()
     }
 
     private func configure(_ window: NSWindow) {
@@ -201,6 +205,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension AppDelegate: NSWindowDelegate {
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        updateWindowVisibility()
+    }
+
+    private func updateWindowVisibility() {
+        Store.shared.setWindowVisible(appWindows.contains {
+            $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible)
+        })
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard !isQuitting else { return true }
         sender.orderOut(nil)

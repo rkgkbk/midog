@@ -43,7 +43,7 @@ final class FocusProxySync {
 
     func refresh(state: FocusState) {
         guard let settings else { return }
-        let signature = state.proxyRules + settings.controller + settings.secret
+        let signature = String(state.isFilteringEnabled()) + state.proxyRules + settings.controller + settings.secret
         lock.lock()
         guard !inFlight, signature != lastSuccess || Date().timeIntervalSince(lastAttempt) > 30 else {
             lock.unlock(); return
@@ -55,7 +55,11 @@ final class FocusProxySync {
             var error: String?
             do {
                 _ = try Self.request(settings, "PUT", "/providers/rules/" + FocusIPC.providerName)
-                if state.isActive() {
+                if FileManager.default.fileExists(atPath: FocusIPC.adultRulesFile.path) {
+                    _ = try Self.request(settings, "PUT", "/providers/rules/" + FocusIPC.adultProviderName)
+                }
+                if state.isFilteringEnabled() {
+                    let adult = Blocklist(try String(contentsOf: FocusIPC.adultRulesFile, encoding: .utf8))
                     let data = try Self.request(settings, "GET", "/connections")
                     struct Snapshot: Decodable {
                         struct Item: Decodable {
@@ -65,7 +69,7 @@ final class FocusProxySync {
                         var connections: [Item]?
                     }
                     let snapshot = try JSONDecoder().decode(Snapshot.self, from: data)
-                    for connection in snapshot.connections ?? [] where state.blocks(connection.metadata.host ?? "") {
+                    for connection in snapshot.connections ?? [] where state.blocks(connection.metadata.host ?? "") || adult.blocks(connection.metadata.host ?? "") {
                         // mihomo looks up the literal route parameter. Escaping UUID hyphens
                         // as %2D returns success without finding or closing the connection.
                         guard let uuid = UUID(uuidString: connection.id) else { continue }
